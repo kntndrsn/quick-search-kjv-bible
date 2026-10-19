@@ -31,6 +31,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val searchQuery = MutableStateFlow("")
     private val navigationBackStack = ArrayDeque<BibleLocation>()
     private var saveScaleJob: Job? = null
+    private var preferencesLoaded = false
 
     private val _uiState = MutableStateFlow(MainUiState(books = repository.books()))
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
@@ -45,6 +46,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     themePreference = preferences.themePreference
                 )
             }
+            preferencesLoaded = true
         }
 
         viewModelScope.launch {
@@ -217,11 +219,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun onChapterPageChanged(chapter: Int) {
+    fun onChapterPageChanged(bookId: Int, chapter: Int) {
+        if (!preferencesLoaded) return
         val current = _uiState.value.currentLocation
-        if (chapter == current.chapter) return
+        if (bookId == current.bookId && chapter == current.chapter) return
         val updated = clampLocation(
             current.copy(
+                bookId = bookId,
                 chapter = chapter,
                 highlightedVerse = null,
                 scrollVerse = 1

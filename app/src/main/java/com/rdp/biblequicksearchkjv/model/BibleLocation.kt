@@ -1,10 +1,10 @@
 package com.rdp.biblequicksearchkjv.model
 
 data class BibleLocation(
-    val bookId: Int = 43,
-    val chapter: Int = 3,
-    val highlightedVerse: Int? = 16,
-    val scrollVerse: Int? = highlightedVerse
+    val bookId: Int = 1,
+    val chapter: Int = 1,
+    val highlightedVerse: Int? = null,
+    val scrollVerse: Int? = highlightedVerse ?: 1
 ) {
     val targetVerse: Int?
         get() = highlightedVerse ?: scrollVerse

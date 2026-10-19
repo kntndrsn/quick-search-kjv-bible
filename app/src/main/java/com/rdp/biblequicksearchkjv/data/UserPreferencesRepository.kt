@@ -27,8 +27,8 @@ class UserPreferencesRepository(private val context: Context) {
 
         ReaderPreferences(
             location = BibleLocation(
-                bookId = prefs[Keys.bookId] ?: 43,
-                chapter = prefs[Keys.chapter] ?: 3,
+                bookId = prefs[Keys.bookId] ?: 1,
+                chapter = prefs[Keys.chapter] ?: 1,
                 highlightedVerse = prefs[Keys.verse]
             ),
             textScale = prefs[Keys.textScale] ?: 1.0f,

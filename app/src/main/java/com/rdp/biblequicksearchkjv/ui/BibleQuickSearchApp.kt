@@ -71,9 +71,9 @@ import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -286,14 +286,12 @@ fun BibleQuickSearchApp(viewModel: MainViewModel = viewModel()) {
                 ) {
                     ReaderPager(
                         repository = repository,
-                        currentBook = currentBook,
                         state = uiState,
                         modifier = Modifier
                             .fillMaxSize()
                             .pinchToZoom(onZoom = viewModel::scaleTextByZoom),
                         onChapterChanged = viewModel::onChapterPageChanged,
-                        onVisibleVerseChanged = viewModel::onVisibleVerseChanged,
-                        onVerseSelected = viewModel::onVerseSelectedInReader
+                        onVisibleVerseChanged = viewModel::onVisibleVerseChanged
                     )
 
                     Box(
@@ -305,6 +303,7 @@ fun BibleQuickSearchApp(viewModel: MainViewModel = viewModel()) {
                         SearchResultsPanel(
                             state = uiState,
                             repository = repository,
+                            isDarkTheme = isDarkTheme,
                             modifier = Modifier.fillMaxWidth(),
                             onReferenceSelected = { match ->
                                 focusManager.clearFocus()
@@ -512,69 +511,80 @@ private fun TableOfContentsPanel(
     }
 }
 
+private data class ChapterPage(
+    val book: BibleBook,
+    val chapter: Int
+)
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ReaderPager(
     repository: BibleRepository,
-    currentBook: BibleBook,
     state: MainUiState,
     modifier: Modifier = Modifier,
-    onChapterChanged: (Int) -> Unit,
-    onVisibleVerseChanged: (Int) -> Unit,
-    onVerseSelected: (Int) -> Unit
+    onChapterChanged: (Int, Int) -> Unit,
+    onVisibleVerseChanged: (Int) -> Unit
 ) {
-    key(currentBook.id) {
-        val targetPage = (state.currentLocation.chapter - 1).coerceIn(0, currentBook.chapterCount - 1)
-        val pagerState = rememberPagerState(
-            initialPage = targetPage,
-            pageCount = { currentBook.chapterCount }
+    val chapterPages = remember(state.books) {
+        state.books.flatMap { book ->
+            (1..book.chapterCount).map { chapter ->
+                ChapterPage(book = book, chapter = chapter)
+            }
+        }
+    }
+    if (chapterPages.isEmpty()) return
+
+    val desiredPage = remember(state.currentLocation.bookId, state.currentLocation.chapter, chapterPages) {
+        chapterPages.indexOfFirst {
+            it.book.id == state.currentLocation.bookId && it.chapter == state.currentLocation.chapter
+        }.coerceAtLeast(0)
+    }
+
+    val pagerState = rememberPagerState(
+        initialPage = desiredPage,
+        pageCount = { chapterPages.size }
+    )
+
+    val currentOnChapterChanged by rememberUpdatedState(onChapterChanged)
+    val currentOnVisibleVerseChanged by rememberUpdatedState(onVisibleVerseChanged)
+
+    LaunchedEffect(desiredPage) {
+        if (pagerState.settledPage != desiredPage) {
+            pagerState.scrollToPage(desiredPage)
+        }
+    }
+
+    LaunchedEffect(pagerState, chapterPages) {
+        snapshotFlow { pagerState.settledPage }
+            .distinctUntilChanged()
+            .collect { settledPage ->
+                val pageItem = chapterPages.getOrNull(settledPage) ?: return@collect
+                currentOnChapterChanged(pageItem.book.id, pageItem.chapter)
+            }
+    }
+
+    HorizontalPager(
+        state = pagerState,
+        modifier = modifier.fillMaxSize()
+    ) { page ->
+        val pageItem = chapterPages[page]
+        val book = pageItem.book
+        val chapter = pageItem.chapter
+        val verses = remember(book.id, chapter) {
+            repository.chapterVerses(book.id, chapter)
+        }
+        val isCurrentChapter = book.id == state.currentLocation.bookId &&
+            chapter == state.currentLocation.chapter
+        ReaderChapter(
+            book = book,
+            chapter = chapter,
+            verses = verses,
+            isCurrentChapter = isCurrentChapter,
+            highlightedVerse = if (isCurrentChapter) state.currentLocation.highlightedVerse else null,
+            targetScrollVerse = if (isCurrentChapter) state.currentLocation.targetVerse else null,
+            textScale = state.textScale,
+            onVisibleVerseChanged = currentOnVisibleVerseChanged
         )
-
-        LaunchedEffect(state.currentLocation.chapter) {
-            val desiredPage = (state.currentLocation.chapter - 1).coerceIn(0, currentBook.chapterCount - 1)
-            if (pagerState.currentPage != desiredPage) {
-                pagerState.scrollToPage(desiredPage)
-            }
-        }
-
-        LaunchedEffect(pagerState) {
-            snapshotFlow { pagerState.settledPage to pagerState.isScrollInProgress }
-                .filter { (_, isScrolling) -> !isScrolling }
-                .distinctUntilChanged()
-                .collect { (settledPage, _) ->
-                    val settledChapter = settledPage + 1
-                    if (settledChapter in 1..currentBook.chapterCount &&
-                        settledChapter != state.currentLocation.chapter
-                    ) {
-                        onChapterChanged(settledChapter)
-                    }
-                }
-        }
-
-        HorizontalPager(
-            state = pagerState,
-            modifier = modifier.fillMaxSize()
-        ) { page ->
-            val chapter = page + 1
-            val verses = remember(currentBook.id, chapter) {
-                repository.chapterVerses(currentBook.id, chapter)
-            }
-            val isCurrentChapter = chapter == state.currentLocation.chapter
-            ReaderChapter(
-                book = currentBook,
-                chapter = chapter,
-                verses = verses,
-                highlightedVerse = if (isCurrentChapter) state.currentLocation.highlightedVerse else null,
-                targetScrollVerse = if (isCurrentChapter) state.currentLocation.targetVerse else null,
-                textScale = state.textScale,
-                onVisibleVerseChanged = { verse ->
-                    if (isCurrentChapter) {
-                        onVisibleVerseChanged(verse)
-                    }
-                },
-                onVerseClick = onVerseSelected
-            )
-        }
     }
 }
 
@@ -583,13 +593,15 @@ private fun ReaderChapter(
     book: BibleBook,
     chapter: Int,
     verses: List<BibleVerse>,
+    isCurrentChapter: Boolean,
     highlightedVerse: Int?,
     targetScrollVerse: Int?,
     textScale: Float,
-    onVisibleVerseChanged: (Int) -> Unit,
-    onVerseClick: (Int) -> Unit
+    onVisibleVerseChanged: (Int) -> Unit
 ) {
     val listState = rememberLazyListState()
+    val currentIsCurrentChapter by rememberUpdatedState(isCurrentChapter)
+    val currentOnVisibleVerseChanged by rememberUpdatedState(onVisibleVerseChanged)
 
     LaunchedEffect(book.id, chapter, highlightedVerse, targetScrollVerse) {
         val verseToFind = highlightedVerse ?: targetScrollVerse ?: return@LaunchedEffect
@@ -609,23 +621,36 @@ private fun ReaderChapter(
             .filter { (_, isScrolling) -> isScrolling }
             .distinctUntilChanged()
             .collect { (firstVisibleIndex, _) ->
-                val verse = if (firstVisibleIndex <= 0) {
-                    1
-                } else {
-                    verses.getOrNull(firstVisibleIndex - 1)?.verse ?: 1
+                if (currentIsCurrentChapter) {
+                    val verse = if (firstVisibleIndex <= 0) {
+                        1
+                    } else {
+                        verses.getOrNull(firstVisibleIndex - 1)?.verse ?: 1
+                    }
+                    currentOnVisibleVerseChanged(verse)
                 }
-                onVisibleVerseChanged(verse)
             }
     }
+
+    val verseSpacing = (2f * textScale).coerceIn(1f, 6f).dp
+    val verseVerticalPadding = (3f * textScale).coerceIn(1.5f, 8f).dp
+    val verseHorizontalSpacing = (10f * textScale).coerceIn(6f, 16f).dp
+    val verseNumberMinWidth = (26f * textScale).coerceIn(16f, 48f).dp
+    val verseFontSize = (18f * textScale).sp
+    val verseLineHeight = (26f * textScale).sp
+    val verseNumberFontSize = (14f * textScale).sp
 
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 32.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(verseSpacing)
     ) {
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(
+                modifier = Modifier.padding(bottom = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 Text(
                     text = book.name,
                     style = MaterialTheme.typography.headlineMedium,
@@ -653,31 +678,37 @@ private fun ReaderChapter(
                     MaterialTheme.colorScheme.surface
                 },
                 tonalElevation = if (isHighlighted) 2.dp else 0.dp,
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onVerseClick(verse.verse) }
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        .padding(horizontal = 8.dp, vertical = verseVerticalPadding),
+                    horizontalArrangement = Arrangement.spacedBy(verseHorizontalSpacing)
                 ) {
                     Text(
                         text = verse.verse.toString(),
                         style = MaterialTheme.typography.labelLarge.copy(
-                            fontSize = ((14f * textScale).coerceIn(11f, 24f)).sp
+                            fontSize = verseNumberFontSize,
+                            lineHeight = verseLineHeight
                         ),
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.widthIn(min = 32.dp)
+                        modifier = Modifier
+                            .widthIn(min = verseNumberMinWidth)
+                            .alignByBaseline()
                     )
                     val styledVerseText = rememberStyledVerseText(verse.text, readerMode = true)
                     Text(
                         text = styledVerseText,
-                        style = MaterialTheme.typography.bodyLarge.copy(fontSize = 18.sp * textScale),
-                        lineHeight = 28.sp * textScale
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            fontSize = verseFontSize,
+                            lineHeight = verseLineHeight
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .alignByBaseline()
                     )
                 }
             }
@@ -839,6 +870,7 @@ private fun SearchBox(
 private fun SearchResultsPanel(
     state: MainUiState,
     repository: BibleRepository,
+    isDarkTheme: Boolean,
     modifier: Modifier = Modifier,
     onReferenceSelected: (ReferenceMatch) -> Unit,
     onBookSelected: (BibleBook) -> Unit,
@@ -854,7 +886,18 @@ private fun SearchResultsPanel(
         modifier = modifier.heightIn(max = 260.dp),
         shape = RoundedCornerShape(20.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        border = if (isDarkTheme) {
+            BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        } else {
+            null
+        },
+        colors = CardDefaults.cardColors(
+            containerColor = if (isDarkTheme) {
+                Color(0xFF2E3138)
+            } else {
+                MaterialTheme.colorScheme.surface
+            }
+        )
     ) {
         LazyColumn(
             contentPadding = PaddingValues(vertical = 10.dp),

@@ -68,6 +68,14 @@ class BibleSearchTest {
         val scrolledOnly = BibleLocation(bookId = 43, chapter = 3, highlightedVerse = null, scrollVerse = 12)
         assertEquals(12, scrolledOnly.targetVerse)
     }
+
+    @Test
+    fun defaultLocationIsGenesisChapterOne() {
+        val defaultLocation = BibleLocation()
+        assertEquals(1, defaultLocation.bookId)
+        assertEquals(1, defaultLocation.chapter)
+        assertEquals(1, defaultLocation.targetVerse)
+    }
 }
 
 
