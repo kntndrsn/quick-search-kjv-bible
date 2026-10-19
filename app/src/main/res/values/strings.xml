@@ -1,4 +1,5 @@
 <resources>
-    <string name="app_name">Bible Quick Search KJV</string>
+    <string name="app_name">Quick Search KJV Bible</string>
+    <string name="launcher_label">KJV</string>
 </resources>
 

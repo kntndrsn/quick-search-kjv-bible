@@ -4,13 +4,18 @@ import com.rdp.biblequicksearchkjv.model.BibleBook
 import com.rdp.biblequicksearchkjv.model.ReferenceMatch
 
 class BibleReferenceParser(
-    private val books: List<BibleBook>
+    books: List<BibleBook>
 ) {
     private val aliasesByLength = books.flatMap { book ->
         book.aliases.map { alias ->
-            AliasEntry(book = book, alias = alias)
+            AliasEntry(
+                book = book,
+                alias = alias,
+                normalizedAlias = SearchNormalizer.normalize(alias),
+                compactAlias = SearchNormalizer.compact(alias)
+            )
         }
-    }.sortedByDescending { SearchNormalizer.compact(it.alias).length }
+    }.sortedByDescending { it.compactAlias.length }
 
     fun parse(query: String): ReferenceMatch? {
         val normalizedQuery = SearchNormalizer.normalize(query)
@@ -18,22 +23,26 @@ class BibleReferenceParser(
         if (normalizedQuery.isBlank()) return null
 
         val aliasEntry = aliasesByLength.firstOrNull { entry ->
-            normalizedQuery.startsWith(SearchNormalizer.normalize(entry.alias)) ||
-                compactQuery.startsWith(SearchNormalizer.compact(entry.alias))
+            normalizedQuery.startsWith(entry.normalizedAlias) ||
+                compactQuery.startsWith(entry.compactAlias)
         } ?: return null
 
-        val normalizedAlias = SearchNormalizer.normalize(aliasEntry.alias)
-        val compactAlias = SearchNormalizer.compact(aliasEntry.alias)
         val remainder = when {
-            normalizedQuery.startsWith(normalizedAlias) -> normalizedQuery.removePrefix(normalizedAlias).trim()
-            compactQuery.startsWith(compactAlias) -> compactQuery.removePrefix(compactAlias)
+            normalizedQuery.startsWith(aliasEntry.normalizedAlias) ->
+                normalizedQuery.removePrefix(aliasEntry.normalizedAlias).trim()
+            compactQuery.startsWith(aliasEntry.compactAlias) ->
+                compactQuery.removePrefix(aliasEntry.compactAlias)
             else -> ""
         }
 
-        val match = Regex("^(\\d+)(?:[: .-]+(\\d+))?.*$").find(remainder) ?: return null
+        val match = chapterVerseRegex.find(remainder) ?: return null
         val chapter = match.groupValues[1].toIntOrNull() ?: return null
         if (chapter !in 1..aliasEntry.book.chapterCount) return null
-        val verse = match.groupValues.getOrNull(2)?.takeIf { it.isNotBlank() }?.toIntOrNull()
+        val verse = match.groupValues
+            .getOrNull(2)
+            ?.takeIf { it.isNotBlank() }
+            ?.toIntOrNull()
+            ?.takeIf { it >= 1 }
 
         return ReferenceMatch(
             book = aliasEntry.book,
@@ -44,7 +53,13 @@ class BibleReferenceParser(
 
     private data class AliasEntry(
         val book: BibleBook,
-        val alias: String
+        val alias: String,
+        val normalizedAlias: String,
+        val compactAlias: String
     )
+
+    companion object {
+        private val chapterVerseRegex = Regex("^(\\d+)(?:[: .-]+(\\d+))?.*$")
+    }
 }
 

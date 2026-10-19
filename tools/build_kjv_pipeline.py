@@ -18,13 +18,18 @@ from import_kjv_to_sqlite import load_jsonl_verses, run_verification, write_sqli
 from kjv_integrity import export_jsonl_verses
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_SOURCE = ROOT / "tools" / "sources" / "kjv_biblesupersearch.txt"
 DEFAULT_JSONL = ROOT / "tools" / "generated" / "kjv_verses.jsonl"
 DEFAULT_DB = ROOT / "app" / "src" / "main" / "assets" / "kjv.db"
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run export -> import -> verify in one command")
-    parser.add_argument("--source", required=True, help="Path to KJV source text file")
+    parser.add_argument(
+        "--source",
+        default=str(DEFAULT_SOURCE),
+        help=f"Path to KJV source text file (default: {DEFAULT_SOURCE})",
+    )
     parser.add_argument("--jsonl", default=str(DEFAULT_JSONL), help=f"Verse JSONL output path (default: {DEFAULT_JSONL})")
     parser.add_argument("--db", default=str(DEFAULT_DB), help=f"SQLite DB output path (default: {DEFAULT_DB})")
     parser.add_argument(

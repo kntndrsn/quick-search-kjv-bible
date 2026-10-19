@@ -10,6 +10,7 @@ after deterministic whitespace canonicalization.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import hashlib
 import json
@@ -196,7 +197,7 @@ def _load_sqlite_verses(db_path: Path, table: str, book_col: str, chapter_col: s
         f"SELECT {book_col}, {chapter_col}, {verse_col}, {text_col} "
         f"FROM {table} ORDER BY {book_col}, {chapter_col}, {verse_col}"
     )
-    with sqlite3.connect(str(db_path)) as conn:
+    with contextlib.closing(sqlite3.connect(str(db_path))) as conn:
         rows = conn.execute(query).fetchall()
 
     verses: list[Verse] = []

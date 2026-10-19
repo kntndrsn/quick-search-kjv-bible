@@ -34,7 +34,8 @@ class BibleRepository(context: Context? = null) {
 
     fun search(query: String): SearchResults {
         val normalized = SearchNormalizer.normalize(query)
-        if (normalized.isBlank()) return SearchResults()
+        val normalizedVerseQuery = SearchNormalizer.normalizeVerseQuery(query)
+        if (normalized.isBlank() && normalizedVerseQuery.isBlank()) return SearchResults()
 
         val compact = SearchNormalizer.compact(query)
         val querySoundex = SearchNormalizer.soundex(query)
@@ -56,16 +57,18 @@ class BibleRepository(context: Context? = null) {
             }.thenBy { it.id })
             .take(6)
 
-        val verseResults = if (normalized.length < 3) {
+        val verseResults = if (normalizedVerseQuery.length < 3) {
             emptyList()
         } else {
-            val dbMatches = searchVersesInDb(normalized)
+            val dbMatches = searchVersesInDb(normalizedVerseQuery)
             if (dbMatches.isNotEmpty()) {
                 dbMatches
             } else {
                 SampleBibleContent.searchableVerses
-                    .filter { verse -> SearchNormalizer.normalize(verse.text).contains(normalized) }
-                    .take(5)
+                    .filter { verse ->
+                        SearchNormalizer.normalizeVerseQuery(verse.text).contains(normalizedVerseQuery)
+                    }
+                    .take(25)
             }
         }
 
@@ -112,40 +115,117 @@ class BibleRepository(context: Context? = null) {
 
     private fun searchVersesInDb(normalizedQuery: String): List<BibleVerse> {
         val db = database ?: return emptyList()
-        val verses = mutableListOf<BibleVerse>()
-        db.rawQuery(
-            """
-            SELECT book_id, chapter, verse, text
-            FROM verses
-            WHERE lower(text) LIKE ?
-            LIMIT 5
-            """.trimIndent(),
-            arrayOf("%$normalizedQuery%")
-        ).use { cursor ->
-            while (cursor.moveToNext()) {
-                verses += BibleVerse(
-                    bookId = cursor.getInt(0),
-                    chapter = cursor.getInt(1),
-                    verse = cursor.getInt(2),
-                    text = cursor.getString(3)
-                )
+        val verses = LinkedHashMap<Triple<Int, Int, Int>, BibleVerse>()
+
+        try {
+            val ftsQuery = "\"${normalizedQuery.replace("\"", "")}\""
+            db.rawQuery(
+                """
+                SELECT book_id, chapter, verse, text
+                FROM verses_fts
+                WHERE verses_fts MATCH ?
+                LIMIT 25
+                """.trimIndent(),
+                arrayOf(ftsQuery)
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val item = BibleVerse(
+                        bookId = cursor.getInt(0),
+                        chapter = cursor.getInt(1),
+                        verse = cursor.getInt(2),
+                        text = cursor.getString(3)
+                    )
+                    verses[Triple(item.bookId, item.chapter, item.verse)] = item
+                }
+            }
+        } catch (_: Exception) {
+            // Fall through to LIKE query if FTS5 is unavailable.
+        }
+
+        if (verses.size < 25) {
+            val remaining = 25 - verses.size
+            db.rawQuery(
+                """
+                SELECT book_id, chapter, verse, text
+                FROM verses
+                WHERE lower(
+                    replace(
+                        replace(
+                            replace(
+                                replace(
+                                    replace(
+                                        replace(
+                                            replace(
+                                                replace(text, '‹', ''),
+                                                '›', ''
+                                            ),
+                                            '[', ''
+                                        ),
+                                        ']', ''
+                                    ),
+                                    '¶ ', ''
+                                ),
+                                '¶', ''
+                            ),
+                            ',', ''
+                        ),
+                        ';', ''
+                    )
+                ) LIKE ?
+                LIMIT ?
+                """.trimIndent(),
+                arrayOf("%$normalizedQuery%", remaining.toString())
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val item = BibleVerse(
+                        bookId = cursor.getInt(0),
+                        chapter = cursor.getInt(1),
+                        verse = cursor.getInt(2),
+                        text = cursor.getString(3)
+                    )
+                    verses.putIfAbsent(Triple(item.bookId, item.chapter, item.verse), item)
+                }
             }
         }
-        return verses
+
+        return verses.values.toList()
     }
 
     private fun openDatabaseFromAssets(context: Context): SQLiteDatabase? {
-        return try {
-            val dbFile = File(context.noBackupFilesDir, "kjv.db")
-            // Always refresh from the bundled asset so stale prior indexing is replaced.
-            context.assets.open("kjv.db").use { input ->
-                dbFile.outputStream().use { output ->
-                    input.copyTo(output)
+        return getOrOpenDatabase(context)
+    }
+
+    companion object {
+        @Volatile
+        private var sharedDatabase: SQLiteDatabase? = null
+
+        @Synchronized
+        private fun getOrOpenDatabase(context: Context): SQLiteDatabase? {
+            sharedDatabase?.takeIf { it.isOpen }?.let { return it }
+
+            return try {
+                val dbFile = File(context.noBackupFilesDir, "kjv.db")
+                val tmpFile = File(context.noBackupFilesDir, "kjv.db.tmp")
+                context.assets.open("kjv.db").use { input ->
+                    tmpFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
                 }
+                if (!dbFile.exists() || dbFile.length() != tmpFile.length()) {
+                    tmpFile.copyTo(dbFile, overwrite = true)
+                }
+                tmpFile.delete()
+
+                SQLiteDatabase.openDatabase(
+                    dbFile.absolutePath,
+                    null,
+                    SQLiteDatabase.OPEN_READONLY
+                ).also {
+                    sharedDatabase = it
+                }
+            } catch (_: Exception) {
+                null
             }
-            SQLiteDatabase.openDatabase(dbFile.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
-        } catch (_: Exception) {
-            null
         }
     }
 }

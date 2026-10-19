@@ -7,7 +7,16 @@ local.properties
 .idea/workspace.xml
 .idea/navEditor.xml
 .idea/assetWizardSettings.xml
+.idea/copilotDiffState.xml
 build/
 app/build/
 tools/*.jar
 tools/generated/
+__pycache__/
+*.py[cod]
+
+# Keep KJV source text and Python database population scripts in source control
+!tools/*.py
+!tools/sources/
+!tools/sources/**
+

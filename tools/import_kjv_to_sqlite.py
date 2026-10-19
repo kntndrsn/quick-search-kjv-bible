@@ -8,6 +8,7 @@ ensure the DB content exactly matches the source file parser output.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sqlite3
 import sys
@@ -24,6 +25,7 @@ from kjv_integrity import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_SOURCE = ROOT / "tools" / "sources" / "kjv_biblesupersearch.txt"
 DEFAULT_JSONL = ROOT / "tools" / "generated" / "kjv_verses.jsonl"
 DEFAULT_DB = ROOT / "app" / "src" / "main" / "assets" / "kjv.db"
 
@@ -114,7 +116,7 @@ def write_sqlite(db_path: Path, verses: Sequence[Verse]) -> None:
     if db_path.exists():
         db_path.unlink()
 
-    with sqlite3.connect(str(db_path)) as conn:
+    with contextlib.closing(sqlite3.connect(str(db_path))) as conn:
         create_schema(conn)
         populate_db(conn, verses)
         conn.commit()
@@ -161,8 +163,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--source",
-        required=True,
-        help="Source KJV text file used for verification",
+        default=str(DEFAULT_SOURCE),
+        help=f"Source KJV text file used for verification (default: {DEFAULT_SOURCE})",
     )
     parser.add_argument(
         "--allow-partial-source",

@@ -1,3 +1,4 @@
+import contextlib
 import json
 import sqlite3
 import sys
@@ -55,7 +56,7 @@ Genesis 1:2 And the earth was without form, and void; and darkness was upon the 
             self.assertEqual(0, rc)
             self.assertTrue(db.exists())
 
-            with sqlite3.connect(str(db)) as conn:
+            with contextlib.closing(sqlite3.connect(str(db))) as conn:
                 verse_count = conn.execute("SELECT COUNT(*) FROM verses").fetchone()[0]
                 book_count = conn.execute("SELECT COUNT(*) FROM books").fetchone()[0]
                 self.assertEqual(2, verse_count)

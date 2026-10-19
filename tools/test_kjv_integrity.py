@@ -8,13 +8,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from kjv_integrity import compare_verses, parse_kjv_source
 
+DEFAULT_SOURCE = Path(__file__).resolve().parent / "sources" / "kjv_biblesupersearch.txt"
+
 
 class KJVIntegrityTest(unittest.TestCase):
     def _write_fixture(self, content: str) -> Path:
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode="w", encoding="utf-8")
         tmp.write(content)
         tmp.close()
-        return Path(tmp.name)
+        path = Path(tmp.name)
+        self.addCleanup(path.unlink, missing_ok=True)
+        return path
 
     def test_parses_line_based_verses(self) -> None:
         fixture = """Authorized King James Version
@@ -71,7 +75,7 @@ Matthew 5:8 ¶ ‹Blessed› [are] ‹the pure in heart: for they shall see God.
         self.assertIn("¶", verses[2].text)
 
     def test_obadiah_boundary_reference_present(self) -> None:
-        source = Path(os.environ.get("KJV_SOURCE", r"C:\Users\rdp\AndroidStudioProjects\BibleQuickSearchKJV\tools\sources\kjv_biblesupersearch.txt"))
+        source = Path(os.environ.get("KJV_SOURCE", str(DEFAULT_SOURCE)))
         if not source.exists():
             self.skipTest("Project source file not present")
 
@@ -84,7 +88,7 @@ Matthew 5:8 ¶ ‹Blessed› [are] ‹the pure in heart: for they shall see God.
         self.assertNotIn("1:4", by_num[3])
 
     def test_local_kjv_source_snapshot_if_present(self) -> None:
-        source = Path(os.environ.get("KJV_SOURCE", r"C:\Users\rdp\AndroidStudioProjects\BibleQuickSearchKJV\tools\sources\kjv_biblesupersearch.txt"))
+        source = Path(os.environ.get("KJV_SOURCE", str(DEFAULT_SOURCE)))
         if not source.exists():
             self.skipTest("Local KJV source not present")
 

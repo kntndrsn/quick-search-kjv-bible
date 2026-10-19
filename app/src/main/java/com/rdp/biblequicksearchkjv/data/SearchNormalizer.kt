@@ -1,20 +1,33 @@
 package com.rdp.biblequicksearchkjv.data
 
 object SearchNormalizer {
+    private val leadingFirstRegex = Regex("^(?:1st|first|i)(?:\\s+|(?=[a-z]))")
+    private val leadingSecondRegex = Regex("^(?:2nd|second|ii)(?:\\s+|(?=[a-z]))")
+    private val leadingThirdRegex = Regex("^(?:3rd|third|iii)(?:\\s+|(?=[a-z]))")
+    private val nonAlphanumericColonRegex = Regex("[^a-z0-9: ]")
+    private val nonAlphanumericRegex = Regex("[^a-z0-9 ]")
+    private val whitespaceRegex = Regex("\\s+")
+
     fun normalize(text: String): String {
+        val cleaned = text
+            .lowercase()
+            .replace(nonAlphanumericColonRegex, " ")
+            .replace(whitespaceRegex, " ")
+            .trim()
+
+        return cleaned
+            .replace(leadingThirdRegex, "3 ")
+            .replace(leadingSecondRegex, "2 ")
+            .replace(leadingFirstRegex, "1 ")
+            .replace(whitespaceRegex, " ")
+            .trim()
+    }
+
+    fun normalizeVerseQuery(text: String): String {
         return text
             .lowercase()
-            .replace("1st", "1")
-            .replace("2nd", "2")
-            .replace("3rd", "3")
-            .replace("first", "1")
-            .replace("second", "2")
-            .replace("third", "3")
-            .replace("iii ", "3 ")
-            .replace("ii ", "2 ")
-            .replace("i ", "1 ")
-            .replace(Regex("[^a-z0-9: ]"), " ")
-            .replace(Regex("\\s+"), " ")
+            .replace(nonAlphanumericRegex, " ")
+            .replace(whitespaceRegex, " ")
             .trim()
     }
 
@@ -47,5 +60,7 @@ object SearchNormalizer {
         else -> '0'
     }
 }
+
+
 
 
