@@ -15,11 +15,11 @@ This implementation creates the Android project structure and the core reader/se
 - text scaling controls with persistence
 - last-opened location persistence
 - book-name, alias, and phonetic-aware search
-- full verse-content search using local SQLite FTS5 + normalized text indexing
+- full verse-content search using Android-compatible SQLite FTS4 + normalized text indexing
 
 ## Project structure
 
-- `app/src/main/java/com/rdp/biblequicksearchkjv` - Compose UI, view model, data and search logic
+- `app/src/main/java/com/kntndrsn/quicksearchkjvbible` - Compose UI, view model, data and search logic
 - `app/src/main/assets` - generated `kjv.db` SQLite asset used by the app
 - `app/src/main/res` - Android resources and adaptive launcher icons
 - `tools/sources/kjv_biblesupersearch.txt` - canonical KJV source text tracked in source control
@@ -58,7 +58,7 @@ Manual/expanded commands are documented in `tools/README.md`.
 
 ## Typical commands
 
-If the Gradle wrapper is added later, these commands are the intended entry points:
+Use the checked-in Gradle wrapper:
 
 ```powershell
 .\gradlew.bat tasks

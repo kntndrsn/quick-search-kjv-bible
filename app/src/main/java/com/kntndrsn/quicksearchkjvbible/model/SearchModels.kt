@@ -1,5 +1,8 @@
-package com.rdp.biblequicksearchkjv.model
+package com.kntndrsn.quicksearchkjvbible.model
 
+import androidx.compose.runtime.Immutable
+
+@Immutable
 data class ReferenceMatch(
     val book: BibleBook,
     val chapter: Int,
@@ -16,9 +19,9 @@ data class ReferenceMatch(
     }
 }
 
+@Immutable
 data class SearchResults(
     val referenceMatch: ReferenceMatch? = null,
     val matchingBooks: List<BibleBook> = emptyList(),
     val matchingVerses: List<BibleVerse> = emptyList()
 )
-

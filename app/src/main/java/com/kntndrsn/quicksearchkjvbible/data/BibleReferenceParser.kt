@@ -1,25 +1,20 @@
-package com.rdp.biblequicksearchkjv.data
+package com.kntndrsn.quicksearchkjvbible.data
 
-import com.rdp.biblequicksearchkjv.model.BibleBook
-import com.rdp.biblequicksearchkjv.model.ReferenceMatch
+import com.kntndrsn.quicksearchkjvbible.model.BibleBook
+import com.kntndrsn.quicksearchkjvbible.model.ReferenceMatch
 
 class BibleReferenceParser(
     books: List<BibleBook>
 ) {
-    private val aliasesByLength = books.flatMap { book ->
-        book.aliases.map { alias ->
-            AliasEntry(
-                book = book,
-                alias = alias,
-                normalizedAlias = SearchNormalizer.normalize(alias),
-                compactAlias = SearchNormalizer.compact(alias)
-            )
-        }
-    }.sortedByDescending { it.compactAlias.length }
+    private val aliasesByLength by lazy { buildAliases(books) }
 
     fun parse(query: String): ReferenceMatch? {
         val normalizedQuery = SearchNormalizer.normalize(query)
-        val compactQuery = SearchNormalizer.compact(query)
+        return parseNormalized(normalizedQuery, SearchNormalizer.compactNormalized(normalizedQuery))
+    }
+
+    /** [normalizedQuery] must be SearchNormalizer.normalize(query) and [compactQuery] its compact form. */
+    fun parseNormalized(normalizedQuery: String, compactQuery: String): ReferenceMatch? {
         if (normalizedQuery.isBlank()) return null
 
         val aliasEntry = aliasesByLength.firstOrNull { entry ->
@@ -60,6 +55,17 @@ class BibleReferenceParser(
 
     companion object {
         private val chapterVerseRegex = Regex("^(\\d+)(?:[: .-]+(\\d+))?.*$")
+
+        private fun buildAliases(books: List<BibleBook>): List<AliasEntry> = books.flatMap { book ->
+            book.aliases.map { alias ->
+                val normalizedAlias = SearchNormalizer.normalize(alias)
+                AliasEntry(
+                    book = book,
+                    alias = alias,
+                    normalizedAlias = normalizedAlias,
+                    compactAlias = SearchNormalizer.compactNormalized(normalizedAlias)
+                )
+            }
+        }.sortedByDescending { it.compactAlias.length }
     }
 }
-

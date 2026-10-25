@@ -1,4 +1,4 @@
-package com.rdp.biblequicksearchkjv.ui.theme
+package com.kntndrsn.quicksearchkjvbible.ui.theme
 
 import android.app.Activity
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -6,7 +6,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
@@ -54,8 +54,8 @@ fun BibleQuickSearchTheme(
 ) {
     val view = LocalView.current
     if (!view.isInEditMode) {
-        SideEffect {
-            val window = (view.context as? Activity)?.window ?: return@SideEffect
+        LaunchedEffect(view, darkTheme) {
+            val window = (view.context as? Activity)?.window ?: return@LaunchedEffect
             val insetsController = WindowCompat.getInsetsController(window, view)
             insetsController.isAppearanceLightStatusBars = !darkTheme
             insetsController.isAppearanceLightNavigationBars = !darkTheme
@@ -67,6 +67,4 @@ fun BibleQuickSearchTheme(
         content = content
     )
 }
-
-
 

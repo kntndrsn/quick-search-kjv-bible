@@ -1,4 +1,4 @@
-package com.rdp.biblequicksearchkjv.data
+package com.kntndrsn.quicksearchkjvbible.data
 
 import android.content.Context
 import androidx.datastore.preferences.core.edit
@@ -6,7 +6,7 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import com.rdp.biblequicksearchkjv.model.BibleLocation
+import com.kntndrsn.quicksearchkjvbible.model.BibleLocation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -24,12 +24,14 @@ class UserPreferencesRepository(private val context: Context) {
         val themePref = themeName?.let {
             runCatching { ThemePreference.valueOf(it) }.getOrNull()
         } ?: ThemePreference.SYSTEM
+        val highlightedVerse = prefs[Keys.verse]
 
         ReaderPreferences(
             location = BibleLocation(
                 bookId = prefs[Keys.bookId] ?: 1,
                 chapter = prefs[Keys.chapter] ?: 1,
-                highlightedVerse = prefs[Keys.verse]
+                highlightedVerse = highlightedVerse,
+                scrollVerse = prefs[Keys.scrollVerse] ?: highlightedVerse ?: 1
             ),
             textScale = prefs[Keys.textScale] ?: 1.0f,
             themePreference = themePref
@@ -41,6 +43,7 @@ class UserPreferencesRepository(private val context: Context) {
             prefs[Keys.bookId] = location.bookId
             prefs[Keys.chapter] = location.chapter
             location.highlightedVerse?.let { prefs[Keys.verse] = it } ?: prefs.remove(Keys.verse)
+            location.scrollVerse?.let { prefs[Keys.scrollVerse] = it } ?: prefs.remove(Keys.scrollVerse)
         }
     }
 
@@ -66,10 +69,8 @@ class UserPreferencesRepository(private val context: Context) {
         val bookId = intPreferencesKey("book_id")
         val chapter = intPreferencesKey("chapter")
         val verse = intPreferencesKey("verse")
+        val scrollVerse = intPreferencesKey("scroll_verse")
         val textScale = floatPreferencesKey("text_scale")
         val themePreference = stringPreferencesKey("theme_preference")
     }
 }
-
-
-

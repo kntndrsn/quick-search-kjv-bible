@@ -1,13 +1,9 @@
-package com.rdp.biblequicksearchkjv.ui
+package com.kntndrsn.quicksearchkjvbible.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -39,8 +35,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -67,16 +61,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -84,10 +75,11 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -100,22 +92,24 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.rdp.biblequicksearchkjv.MainUiState
-import com.rdp.biblequicksearchkjv.MainViewModel
-import com.rdp.biblequicksearchkjv.data.BibleRepository
-import com.rdp.biblequicksearchkjv.data.ThemePreference
-import com.rdp.biblequicksearchkjv.model.BibleBook
-import com.rdp.biblequicksearchkjv.model.BibleVerse
-import com.rdp.biblequicksearchkjv.model.ReferenceMatch
-import com.rdp.biblequicksearchkjv.ui.theme.BibleQuickSearchTheme
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.filter
+import com.kntndrsn.quicksearchkjvbible.MainViewModel
+import com.kntndrsn.quicksearchkjvbible.data.BibleRepository
+import com.kntndrsn.quicksearchkjvbible.data.ThemePreference
+import com.kntndrsn.quicksearchkjvbible.model.BibleBook
+import com.kntndrsn.quicksearchkjvbible.model.BibleVerse
+import com.kntndrsn.quicksearchkjvbible.model.ReferenceMatch
+import com.kntndrsn.quicksearchkjvbible.model.SearchResults
+import com.kntndrsn.quicksearchkjvbible.ui.theme.BibleQuickSearchTheme
 import kotlin.math.roundToInt
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun BibleQuickSearchApp(viewModel: MainViewModel = viewModel()) {
+    val isReady by viewModel.isReady.collectAsStateWithLifecycle()
+    if (!isReady) return
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val scale = viewModel.textScale.collectAsStateWithLifecycle()
+    val deferredScale = remember(scale) { { scale.value } }
     val repository = viewModel.repository
     val focusManager = LocalFocusManager.current
     var isTableOfContentsVisible by rememberSaveable { mutableStateOf(false) }
@@ -127,23 +121,9 @@ fun BibleQuickSearchApp(viewModel: MainViewModel = viewModel()) {
         ThemePreference.DARK -> true
     }
 
-    val currentBook = remember(uiState.currentLocation.bookId, uiState.books) {
-        uiState.books.firstOrNull { it.id == uiState.currentLocation.bookId } ?: uiState.books.first()
-    }
+    val currentBook = repository.bookById(uiState.currentLocation.bookId)
 
     val isSearchActive = uiState.isSearchFocused || uiState.searchQuery.isNotBlank()
-    val topBarState = rememberTopAppBarState()
-    val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior(topBarState)
-
-    LaunchedEffect(uiState.currentLocation.bookId, uiState.currentLocation.chapter) {
-        topBarState.heightOffset = 0f
-    }
-
-    LaunchedEffect(isTableOfContentsVisible, isSearchActive) {
-        if (isTableOfContentsVisible || isSearchActive) {
-            topBarState.heightOffset = 0f
-        }
-    }
 
     BackHandler(
         enabled = isTableOfContentsVisible || isSearchActive || uiState.canNavigateBack
@@ -166,83 +146,35 @@ fun BibleQuickSearchApp(viewModel: MainViewModel = viewModel()) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .semantics { testTagsAsResourceId = true }
                 .background(MaterialTheme.colorScheme.background)
         ) {
             Scaffold(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .nestedScroll(scrollBehavior.nestedScrollConnection),
+                modifier = Modifier.fillMaxSize(),
                 topBar = {
-                    TopAppBar(
-                        scrollBehavior = scrollBehavior,
-                        windowInsets = TopAppBarDefaults.windowInsets.union(
-                            WindowInsets.displayCutout.only(
-                                WindowInsetsSides.Top + WindowInsetsSides.Horizontal
-                            )
-                        ),
-                        colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = MaterialTheme.colorScheme.surface,
-                            scrolledContainerColor = MaterialTheme.colorScheme.surface
-                        ),
-                        title = {
-                            Column(
-                                modifier = Modifier.clickable {
-                                    focusManager.clearFocus()
-                                    viewModel.openBookPicker(currentBook)
-                                }
-                            ) {
-                                Text(
-                                    text = currentBook.name,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = "Chapter ${uiState.currentLocation.chapter}",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1
-                                )
-                            }
+                    ReaderTopBar(
+                        book = currentBook,
+                        chapter = uiState.currentLocation.chapter,
+                        isDarkTheme = isDarkTheme,
+                        textScale = deferredScale,
+                        onOpenBook = {
+                            focusManager.clearFocus()
+                            viewModel.openBookPicker(currentBook)
                         },
-                        navigationIcon = {
-                            TableOfContentsButton(
-                                onClick = {
-                                    focusManager.clearFocus()
-                                    isTableOfContentsVisible = !isTableOfContentsVisible
-                                },
-                                modifier = Modifier.padding(start = 12.dp, end = 4.dp)
-                            )
+                        onOpenTableOfContents = {
+                            focusManager.clearFocus()
+                            isTableOfContentsVisible = !isTableOfContentsVisible
                         },
-                        actions = {
-                            TextScaleControls(
-                                textScale = uiState.textScale,
-                                onDecrease = { viewModel.stepTextScale(-0.1f) },
-                                onReset = viewModel::resetTextScale,
-                                onIncrease = { viewModel.stepTextScale(0.1f) }
-                            )
-                            IconButton(
-                                onClick = { viewModel.toggleTheme(isDarkTheme) },
-                                modifier = Modifier.padding(end = 6.dp)
-                            ) {
-                                Icon(
-                                    imageVector = if (isDarkTheme) {
-                                        Icons.Default.LightMode
-                                    } else {
-                                        Icons.Default.DarkMode
-                                    },
-                                    contentDescription = if (isDarkTheme) {
-                                        "Switch to light mode"
-                                    } else {
-                                        "Switch to dark mode"
-                                    }
-                                )
-                            }
-                        }
+                        onDecrease = { viewModel.stepTextScale(-0.1f) },
+                        onReset = viewModel::resetTextScale,
+                        onIncrease = { viewModel.stepTextScale(0.1f) },
+                        onToggleTheme = { viewModel.toggleTheme(isDarkTheme) }
                     )
                 },
                 bottomBar = {
                     BottomBar(
-                        state = uiState,
+                        query = uiState.searchQuery,
+                        isSearchFocused = uiState.isSearchFocused,
                         onOpenTableOfContents = {
                             focusManager.clearFocus()
                             isTableOfContentsVisible = !isTableOfContentsVisible
@@ -286,12 +218,17 @@ fun BibleQuickSearchApp(viewModel: MainViewModel = viewModel()) {
                 ) {
                     ReaderPager(
                         repository = repository,
-                        state = uiState,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .pinchToZoom(onZoom = viewModel::scaleTextByZoom),
+                        bookId = uiState.currentLocation.bookId,
+                        chapter = uiState.currentLocation.chapter,
+                        highlightedVerse = uiState.currentLocation.highlightedVerse,
+                        targetVerse = uiState.targetVerse,
+                        textScale = deferredScale,
+                        modifier = Modifier.fillMaxSize(),
                         onChapterChanged = viewModel::onChapterPageChanged,
-                        onVisibleVerseChanged = viewModel::onVisibleVerseChanged
+                        onReaderStopped = viewModel::onReaderStopped,
+                        onReaderBackgrounded = viewModel::onReaderBackgrounded,
+                        onZoomCommitted = viewModel::scaleTextByZoom,
+                        onVerseSelected = viewModel::onVerseSelectedInReader
                     )
 
                     Box(
@@ -300,8 +237,8 @@ fun BibleQuickSearchApp(viewModel: MainViewModel = viewModel()) {
                             .padding(horizontal = 16.dp, vertical = 12.dp),
                         contentAlignment = Alignment.BottomCenter
                     ) {
-                        SearchResultsPanel(
-                            state = uiState,
+                        if (isSearchActive) SearchResultsPanel(
+                            results = uiState.searchResults,
                             repository = repository,
                             isDarkTheme = isDarkTheme,
                             modifier = Modifier.fillMaxWidth(),
@@ -346,25 +283,57 @@ fun BibleQuickSearchApp(viewModel: MainViewModel = viewModel()) {
     }
 }
 
-private fun Modifier.pinchToZoom(onZoom: (Float) -> Unit): Modifier = pointerInput(Unit) {
-    awaitEachGesture {
-        awaitFirstDown(requireUnconsumed = false)
-        do {
-            val event = awaitPointerEvent()
-            val pressedCount = event.changes.count { it.pressed }
-            if (pressedCount >= 2) {
-                val zoom = event.calculateZoom()
-                if (zoom != 1f && !zoom.isNaN() && zoom > 0f) {
-                    onZoom(zoom)
-                    event.changes.forEach { change ->
-                        if (change.positionChanged()) {
-                            change.consume()
-                        }
-                    }
-                }
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReaderTopBar(
+    book: BibleBook,
+    chapter: Int,
+    isDarkTheme: Boolean,
+    textScale: () -> Float,
+    onOpenBook: () -> Unit,
+    onOpenTableOfContents: () -> Unit,
+    onDecrease: () -> Unit,
+    onReset: () -> Unit,
+    onIncrease: () -> Unit,
+    onToggleTheme: () -> Unit
+) {
+    TopAppBar(
+        windowInsets = TopAppBarDefaults.windowInsets.union(
+            WindowInsets.displayCutout.only(
+                WindowInsetsSides.Top + WindowInsetsSides.Horizontal
+            )
+        ),
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            scrolledContainerColor = MaterialTheme.colorScheme.surface
+        ),
+        title = {
+            Column(modifier = Modifier.clickable(onClick = onOpenBook)) {
+                Text(text = book.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    text = "Chapter $chapter",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
+                )
             }
-        } while (event.changes.any { it.pressed })
-    }
+        },
+        navigationIcon = {
+            TableOfContentsButton(
+                onClick = onOpenTableOfContents,
+                modifier = Modifier.padding(start = 12.dp, end = 4.dp)
+            )
+        },
+        actions = {
+            TextScaleControls(textScale, onDecrease, onReset, onIncrease)
+            IconButton(onClick = onToggleTheme, modifier = Modifier.padding(end = 6.dp)) {
+                Icon(
+                    imageVector = if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
+                    contentDescription = if (isDarkTheme) "Switch to light mode" else "Switch to dark mode"
+                )
+            }
+        }
+    )
 }
 
 @Composable
@@ -511,214 +480,10 @@ private fun TableOfContentsPanel(
     }
 }
 
-private data class ChapterPage(
-    val book: BibleBook,
-    val chapter: Int
-)
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun ReaderPager(
-    repository: BibleRepository,
-    state: MainUiState,
-    modifier: Modifier = Modifier,
-    onChapterChanged: (Int, Int) -> Unit,
-    onVisibleVerseChanged: (Int) -> Unit
-) {
-    val chapterPages = remember(state.books) {
-        state.books.flatMap { book ->
-            (1..book.chapterCount).map { chapter ->
-                ChapterPage(book = book, chapter = chapter)
-            }
-        }
-    }
-    if (chapterPages.isEmpty()) return
-
-    val desiredPage = remember(state.currentLocation.bookId, state.currentLocation.chapter, chapterPages) {
-        chapterPages.indexOfFirst {
-            it.book.id == state.currentLocation.bookId && it.chapter == state.currentLocation.chapter
-        }.coerceAtLeast(0)
-    }
-
-    val pagerState = rememberPagerState(
-        initialPage = desiredPage,
-        pageCount = { chapterPages.size }
-    )
-
-    val currentOnChapterChanged by rememberUpdatedState(onChapterChanged)
-    val currentOnVisibleVerseChanged by rememberUpdatedState(onVisibleVerseChanged)
-
-    LaunchedEffect(desiredPage) {
-        if (pagerState.settledPage != desiredPage) {
-            pagerState.scrollToPage(desiredPage)
-        }
-    }
-
-    LaunchedEffect(pagerState, chapterPages) {
-        snapshotFlow { pagerState.settledPage }
-            .distinctUntilChanged()
-            .collect { settledPage ->
-                val pageItem = chapterPages.getOrNull(settledPage) ?: return@collect
-                currentOnChapterChanged(pageItem.book.id, pageItem.chapter)
-            }
-    }
-
-    HorizontalPager(
-        state = pagerState,
-        modifier = modifier.fillMaxSize()
-    ) { page ->
-        val pageItem = chapterPages[page]
-        val book = pageItem.book
-        val chapter = pageItem.chapter
-        val verses = remember(book.id, chapter) {
-            repository.chapterVerses(book.id, chapter)
-        }
-        val isCurrentChapter = book.id == state.currentLocation.bookId &&
-            chapter == state.currentLocation.chapter
-        ReaderChapter(
-            book = book,
-            chapter = chapter,
-            verses = verses,
-            isCurrentChapter = isCurrentChapter,
-            highlightedVerse = if (isCurrentChapter) state.currentLocation.highlightedVerse else null,
-            targetScrollVerse = if (isCurrentChapter) state.currentLocation.targetVerse else null,
-            textScale = state.textScale,
-            onVisibleVerseChanged = currentOnVisibleVerseChanged
-        )
-    }
-}
-
-@Composable
-private fun ReaderChapter(
-    book: BibleBook,
-    chapter: Int,
-    verses: List<BibleVerse>,
-    isCurrentChapter: Boolean,
-    highlightedVerse: Int?,
-    targetScrollVerse: Int?,
-    textScale: Float,
-    onVisibleVerseChanged: (Int) -> Unit
-) {
-    val listState = rememberLazyListState()
-    val currentIsCurrentChapter by rememberUpdatedState(isCurrentChapter)
-    val currentOnVisibleVerseChanged by rememberUpdatedState(onVisibleVerseChanged)
-
-    LaunchedEffect(book.id, chapter, highlightedVerse, targetScrollVerse) {
-        val verseToFind = highlightedVerse ?: targetScrollVerse ?: return@LaunchedEffect
-        if (verseToFind <= 1) {
-            listState.scrollToItem(0)
-            return@LaunchedEffect
-        }
-        val verseIndex = verses.indexOfFirst { it.verse == verseToFind }
-        if (verseIndex >= 0) {
-            // Item 0 is the chapter header; verses start at index 1.
-            listState.scrollToItem(index = verseIndex + 1, scrollOffset = -48)
-        }
-    }
-
-    LaunchedEffect(listState, verses) {
-        snapshotFlow { listState.firstVisibleItemIndex to listState.isScrollInProgress }
-            .filter { (_, isScrolling) -> isScrolling }
-            .distinctUntilChanged()
-            .collect { (firstVisibleIndex, _) ->
-                if (currentIsCurrentChapter) {
-                    val verse = if (firstVisibleIndex <= 0) {
-                        1
-                    } else {
-                        verses.getOrNull(firstVisibleIndex - 1)?.verse ?: 1
-                    }
-                    currentOnVisibleVerseChanged(verse)
-                }
-            }
-    }
-
-    val verseSpacing = (2f * textScale).coerceIn(1f, 6f).dp
-    val verseVerticalPadding = (3f * textScale).coerceIn(1.5f, 8f).dp
-    val verseHorizontalSpacing = (10f * textScale).coerceIn(6f, 16f).dp
-    val verseNumberMinWidth = (26f * textScale).coerceIn(16f, 48f).dp
-    val verseFontSize = (18f * textScale).sp
-    val verseLineHeight = (26f * textScale).sp
-    val verseNumberFontSize = (14f * textScale).sp
-
-    LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 32.dp),
-        verticalArrangement = Arrangement.spacedBy(verseSpacing)
-    ) {
-        item {
-            Column(
-                modifier = Modifier.padding(bottom = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Text(
-                    text = book.name,
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "Chapter $chapter",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = "Swipe left or right to move between chapters. Pinch to resize text.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        items(verses, key = { "${it.bookId}-${it.chapter}-${it.verse}" }) { verse ->
-            val isHighlighted = highlightedVerse == verse.verse
-            Surface(
-                color = if (isHighlighted) {
-                    MaterialTheme.colorScheme.secondaryContainer
-                } else {
-                    MaterialTheme.colorScheme.surface
-                },
-                tonalElevation = if (isHighlighted) 2.dp else 0.dp,
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = verseVerticalPadding),
-                    horizontalArrangement = Arrangement.spacedBy(verseHorizontalSpacing)
-                ) {
-                    Text(
-                        text = verse.verse.toString(),
-                        style = MaterialTheme.typography.labelLarge.copy(
-                            fontSize = verseNumberFontSize,
-                            lineHeight = verseLineHeight
-                        ),
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier
-                            .widthIn(min = verseNumberMinWidth)
-                            .alignByBaseline()
-                    )
-                    val styledVerseText = rememberStyledVerseText(verse.text, readerMode = true)
-                    Text(
-                        text = styledVerseText,
-                        style = MaterialTheme.typography.bodyLarge.copy(
-                            fontSize = verseFontSize,
-                            lineHeight = verseLineHeight
-                        ),
-                        modifier = Modifier
-                            .weight(1f)
-                            .alignByBaseline()
-                    )
-                }
-            }
-        }
-    }
-}
-
 @Composable
 private fun BottomBar(
-    state: MainUiState,
+    query: String,
+    isSearchFocused: Boolean,
     onOpenTableOfContents: () -> Unit,
     onQueryChange: (String) -> Unit,
     onFocusChanged: (Boolean) -> Unit,
@@ -752,7 +517,8 @@ private fun BottomBar(
             )
 
             SearchBox(
-                state = state,
+                query = query,
+                isSearchFocused = isSearchFocused,
                 onQueryChange = onQueryChange,
                 onFocusChanged = onFocusChanged,
                 onClear = onClear,
@@ -765,7 +531,8 @@ private fun BottomBar(
 
 @Composable
 private fun SearchBox(
-    state: MainUiState,
+    query: String,
+    isSearchFocused: Boolean,
     onQueryChange: (String) -> Unit,
     onFocusChanged: (Boolean) -> Unit,
     onClear: () -> Unit,
@@ -774,7 +541,7 @@ private fun SearchBox(
 ) {
     val focusRequester = remember { FocusRequester() }
     val interactionSource = remember { MutableInteractionSource() }
-    val isActive = state.isSearchFocused || state.searchQuery.isNotBlank()
+    val isActive = isSearchFocused || query.isNotBlank()
 
     Surface(
         modifier = modifier
@@ -821,11 +588,11 @@ private fun SearchBox(
                 modifier = Modifier.weight(1f),
                 contentAlignment = Alignment.CenterStart
             ) {
-                if (state.searchQuery.isEmpty()) {
+                if (query.isEmpty()) {
                     Text(
-                        text = if (state.isSearchFocused) "Type verse, book, or word..." else "Search",
+                        text = if (isSearchFocused) "Type verse, book, or word..." else "Search",
                         style = TextStyle(
-                            fontSize = if (state.isSearchFocused) 20.sp else 18.sp,
+                            fontSize = if (isSearchFocused) 20.sp else 18.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         ),
                         maxLines = 1,
@@ -833,9 +600,10 @@ private fun SearchBox(
                     )
                 }
                 BasicTextField(
-                    value = state.searchQuery,
+                    value = query,
                     onValueChange = onQueryChange,
                     modifier = Modifier
+                        .testTag("search_input")
                         .fillMaxWidth()
                         .focusRequester(focusRequester)
                         .onFocusChanged { onFocusChanged(it.isFocused) },
@@ -851,7 +619,7 @@ private fun SearchBox(
                     keyboardActions = KeyboardActions(onSearch = { onSearchSubmit() })
                 )
             }
-            if (state.searchQuery.isNotBlank()) {
+            if (query.isNotBlank()) {
                 IconButton(
                     onClick = onClear,
                     modifier = Modifier.size(36.dp)
@@ -868,7 +636,7 @@ private fun SearchBox(
 
 @Composable
 private fun SearchResultsPanel(
-    state: MainUiState,
+    results: SearchResults,
     repository: BibleRepository,
     isDarkTheme: Boolean,
     modifier: Modifier = Modifier,
@@ -876,11 +644,11 @@ private fun SearchResultsPanel(
     onBookSelected: (BibleBook) -> Unit,
     onVerseSelected: (BibleVerse) -> Unit
 ) {
-    val hasResults = state.searchResults.referenceMatch != null ||
-        state.searchResults.matchingBooks.isNotEmpty() ||
-        state.searchResults.matchingVerses.isNotEmpty()
+    val hasResults = results.referenceMatch != null ||
+        results.matchingBooks.isNotEmpty() ||
+        results.matchingVerses.isNotEmpty()
 
-    if (!(state.isSearchFocused || state.searchQuery.isNotBlank()) || !hasResults) return
+    if (!hasResults) return
 
     Card(
         modifier = modifier.heightIn(max = 260.dp),
@@ -902,37 +670,38 @@ private fun SearchResultsPanel(
         LazyColumn(
             contentPadding = PaddingValues(vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth().testTag("search_results")
         ) {
-            state.searchResults.referenceMatch?.let { match ->
-                item {
+            results.referenceMatch?.let { match ->
+                item(key = "reference", contentType = "reference") {
                     SearchSectionTitle("Reference")
                     SearchRow(
                         title = match.label,
-                        subtitle = AnnotatedString("Open chapter for reading${match.verse?.let { ", highlight verse $it" } ?: ""}"),
+                        subtitle = "Open chapter for reading${match.verse?.let { ", highlight verse $it" } ?: ""}",
+                        modifier = Modifier.testTag("search_reference_result"),
                         onClick = { onReferenceSelected(match) }
                     )
                 }
             }
 
-            if (state.searchResults.matchingBooks.isNotEmpty()) {
-                item { SearchSectionTitle("Books") }
-                items(state.searchResults.matchingBooks, key = { it.id }) { book ->
+            if (results.matchingBooks.isNotEmpty()) {
+                item(key = "books_header", contentType = "header") { SearchSectionTitle("Books") }
+                items(results.matchingBooks, key = { it.id }, contentType = { "book" }) { book ->
                     SearchRow(
                         title = book.name,
-                        subtitle = AnnotatedString("Tap to pick a chapter quickly"),
+                        subtitle = "Tap to pick a chapter quickly",
                         onClick = { onBookSelected(book) }
                     )
                 }
             }
 
-            if (state.searchResults.matchingVerses.isNotEmpty()) {
-                item { SearchSectionTitle("Verses") }
-                items(state.searchResults.matchingVerses, key = { "${it.bookId}-${it.chapter}-${it.verse}" }) { verse ->
+            if (results.matchingVerses.isNotEmpty()) {
+                item(key = "verses_header", contentType = "header") { SearchSectionTitle("Verses") }
+                items(results.matchingVerses, key = { verseKey(it.bookId, it.chapter, it.verse) }, contentType = { "verse" }) { verse ->
                     val book = repository.bookById(verse.bookId)
                     SearchRow(
                         title = "${book.name} ${verse.chapter}:${verse.verse}",
-                        subtitle = rememberStyledVerseText(verse.text),
+                        subtitle = plainVerseText(verse.text),
                         onClick = { onVerseSelected(verse) }
                     )
                 }
@@ -954,11 +723,12 @@ private fun SearchSectionTitle(title: String) {
 @Composable
 private fun SearchRow(
     title: String,
-    subtitle: AnnotatedString,
+    subtitle: String,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .padding(horizontal = 20.dp, vertical = 12.dp)
@@ -975,26 +745,11 @@ private fun SearchRow(
     }
 }
 
-@Composable
-private fun rememberStyledVerseText(raw: String): AnnotatedString {
-    return rememberStyledVerseText(raw, readerMode = false)
+private fun plainVerseText(raw: String): String = buildString(raw.length) {
+    raw.forEach { if (it != '‹' && it != '›' && it != '[' && it != ']') append(it) }
 }
 
-@Composable
-private fun rememberStyledVerseText(raw: String, readerMode: Boolean): AnnotatedString {
-    val christWordColor = MaterialTheme.colorScheme.error
-    val pilcrowColor = MaterialTheme.colorScheme.primary
-    return remember(raw, readerMode, christWordColor, pilcrowColor) {
-        buildStyledVerseAnnotatedString(
-            raw = raw,
-            christWordColor = christWordColor,
-            pilcrowColor = pilcrowColor,
-            paragraphBreakBeforePilcrow = readerMode
-        )
-    }
-}
-
-private fun buildStyledVerseAnnotatedString(
+internal fun buildStyledVerseAnnotatedString(
     raw: String,
     christWordColor: Color,
     pilcrowColor: Color,
@@ -1062,31 +817,38 @@ private fun buildStyledVerseAnnotatedString(
 
 @Composable
 private fun TextScaleControls(
-    textScale: Float,
+    textScale: () -> Float,
     onDecrease: () -> Unit,
     onReset: () -> Unit,
     onIncrease: () -> Unit
 ) {
-    val percentLabel = "${(textScale * 100).roundToInt()}%"
+    val scale = textScale()
+    val percentLabel = "${(scale * 100).roundToInt()}%"
     Row(verticalAlignment = Alignment.CenterVertically) {
         TextButton(
             onClick = onDecrease,
             contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
-            modifier = Modifier.widthIn(min = 36.dp)
+            modifier = Modifier.widthIn(min = 36.dp).testTag("text_scale_decrease")
         ) {
             Text("A-")
         }
         TextButton(
             onClick = onReset,
             contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
-            modifier = Modifier.widthIn(min = 48.dp)
+            modifier = Modifier.widthIn(min = 48.dp).testTag("text_scale_reset")
         ) {
-            Text(text = percentLabel, fontWeight = FontWeight.Bold)
+            Text(
+                text = percentLabel,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.testTag("text_scale_value").semantics {
+                    contentDescription = "Text scale ${"%.1f".format(java.util.Locale.ROOT, scale)}"
+                }
+            )
         }
         TextButton(
             onClick = onIncrease,
             contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
-            modifier = Modifier.widthIn(min = 36.dp)
+            modifier = Modifier.widthIn(min = 36.dp).testTag("text_scale_increase")
         ) {
             Text("A+")
         }
@@ -1131,13 +893,6 @@ private fun ChapterPickerDialog(
         }
     )
 }
-
-
-
-
-
-
-
 
 
 

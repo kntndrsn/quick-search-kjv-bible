@@ -1,5 +1,7 @@
 *.iml
 .gradle/
+.kotlin/
+.pytest_cache/
 local.properties
 .idea/caches/
 .idea/libraries/
@@ -10,6 +12,7 @@ local.properties
 .idea/copilotDiffState.xml
 build/
 app/build/
+app/release/
 tools/*.jar
 tools/generated/
 __pycache__/

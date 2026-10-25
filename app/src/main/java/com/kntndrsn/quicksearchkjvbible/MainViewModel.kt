@@ -1,75 +1,101 @@
-package com.rdp.biblequicksearchkjv
+package com.kntndrsn.quicksearchkjvbible
 
 import android.app.Application
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.rdp.biblequicksearchkjv.data.BibleRepository
-import com.rdp.biblequicksearchkjv.data.ThemePreference
-import com.rdp.biblequicksearchkjv.data.UserPreferencesRepository
-import com.rdp.biblequicksearchkjv.model.BibleBook
-import com.rdp.biblequicksearchkjv.model.BibleLocation
-import com.rdp.biblequicksearchkjv.model.SearchResults
-import kotlinx.coroutines.FlowPreview
+import com.kntndrsn.quicksearchkjvbible.data.BibleRepository
+import com.kntndrsn.quicksearchkjvbible.data.ThemePreference
+import com.kntndrsn.quicksearchkjvbible.data.UserPreferencesRepository
+import com.kntndrsn.quicksearchkjvbible.model.BibleBook
+import com.kntndrsn.quicksearchkjvbible.model.BibleLocation
+import com.kntndrsn.quicksearchkjvbible.model.SearchResults
+import com.kntndrsn.quicksearchkjvbible.model.VerseTarget
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlin.math.max
-import kotlin.math.min
-import kotlin.time.Duration.Companion.milliseconds
 
-@OptIn(FlowPreview::class)
+@OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     val repository = BibleRepository(application)
     private val preferencesRepository = UserPreferencesRepository(application)
     private val searchQuery = MutableStateFlow("")
     private val navigationBackStack = ArrayDeque<BibleLocation>()
+    private val persistenceJob = SupervisorJob()
+    private val persistenceScope = CoroutineScope(persistenceJob + Dispatchers.IO)
+    private val pendingPreferences = Channel<PendingPreferences>(Channel.CONFLATED)
     private var saveScaleJob: Job? = null
+    private var saveLocationJob: Job? = null
+    private var latestLocation = BibleLocation()
     private var preferencesLoaded = false
 
     private val _uiState = MutableStateFlow(MainUiState(books = repository.books()))
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
+    private val _textScale = MutableStateFlow(DEFAULT_TEXT_SCALE)
+    val textScale: StateFlow<Float> = _textScale.asStateFlow()
+    private val _isReady = MutableStateFlow(false)
+    val isReady: StateFlow<Boolean> = _isReady.asStateFlow()
 
     init {
+        persistenceScope.launch {
+            for (pending in pendingPreferences) {
+                preferencesRepository.saveLocation(pending.location)
+                preferencesRepository.saveTextScale(pending.textScale)
+            }
+        }
         viewModelScope.launch {
+            val initialChapterLoad = async(Dispatchers.IO) { repository.warmUp() }
             val preferences = preferencesRepository.preferences.first()
-            _uiState.update { state ->
-                state.copy(
-                    currentLocation = clampLocation(preferences.location),
-                    textScale = preferences.textScale.coerceIn(MIN_TEXT_SCALE, MAX_TEXT_SCALE),
+            val location = clampLocation(preferences.location)
+            latestLocation = location
+            _textScale.value = preferences.textScale.coerceIn(MIN_TEXT_SCALE, MAX_TEXT_SCALE)
+            _uiState.update {
+                it.copy(
+                    currentLocation = location,
+                    targetVerse = VerseTarget(location.scrollVerse),
                     themePreference = preferences.themePreference
                 )
             }
+            initialChapterLoad.await()
+            if (location.bookId != 1 || location.chapter != 1) {
+                repository.warmUp(location.bookId, location.chapter)
+            }
             preferencesLoaded = true
+            _isReady.value = true
         }
-
         viewModelScope.launch {
-            searchQuery
-                .debounce(180.milliseconds)
-                .distinctUntilChanged()
-                .collect { query ->
-                    _uiState.update { state ->
-                        state.copy(
-                            searchResults = repository.search(query)
-                        )
-                    }
+            searchQuery.mapLatest { query ->
+                val navigation = repository.searchNavigation(query)
+                _uiState.update {
+                    if (it.searchQuery == query) it.copy(searchResults = navigation) else it
                 }
+                delay(120)
+                query to navigation.copy(matchingVerses = repository.searchVerseText(query))
+            }.flowOn(Dispatchers.Default).collectLatest { (query, results) ->
+                _uiState.update {
+                    if (it.searchQuery == query) it.copy(searchResults = results) else it
+                }
+            }
         }
     }
 
     fun updateSearchQuery(query: String) {
-        _uiState.update {
-            it.copy(
-                searchQuery = query,
-                searchResults = if (query.isBlank()) SearchResults() else it.searchResults
-            )
-        }
+        if (_uiState.value.searchQuery == query) return
+        _uiState.update { it.copy(searchQuery = query, searchResults = SearchResults()) }
         searchQuery.value = query
     }
 
@@ -79,18 +105,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun dismissSearch() {
         _uiState.update {
-            it.copy(
-                isSearchFocused = false,
-                searchQuery = "",
-                searchResults = SearchResults()
-            )
+            it.copy(isSearchFocused = false, searchQuery = "", searchResults = SearchResults())
         }
         searchQuery.value = ""
     }
 
     fun openBookPicker(book: BibleBook) {
         if (book.chapterCount == 1) {
-            openChapter(book = book, chapter = 1, highlightedVerse = 1)
+            openChapter(book, 1, highlightedVerse = 1)
         } else {
             _uiState.update { it.copy(chapterPickerBook = book) }
         }
@@ -107,28 +129,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         clearSearch: Boolean = true,
         recordHistory: Boolean = true
     ) {
-        val previousLocation = _uiState.value.currentLocation
+        val previous = latestLocation
         val location = clampLocation(
-            BibleLocation(
-                bookId = book.id,
-                chapter = chapter,
-                highlightedVerse = highlightedVerse,
-                scrollVerse = highlightedVerse ?: 1
-            )
+            BibleLocation(book.id, chapter, highlightedVerse, highlightedVerse ?: 1)
         )
-
-        if (recordHistory && !isSamePlace(previousLocation, location)) {
-            if (navigationBackStack.lastOrNull()?.let { isSamePlace(it, previousLocation) } != true) {
-                if (navigationBackStack.size >= MAX_BACK_STACK_SIZE) {
-                    navigationBackStack.removeFirst()
-                }
-                navigationBackStack.addLast(previousLocation)
-            }
+        if (recordHistory && !isSamePlace(previous, location) &&
+            navigationBackStack.lastOrNull()?.let { isSamePlace(it, previous) } != true
+        ) {
+            if (navigationBackStack.size >= MAX_BACK_STACK_SIZE) navigationBackStack.removeFirst()
+            navigationBackStack.addLast(previous)
         }
-
         _uiState.update {
             it.copy(
                 currentLocation = location,
+                targetVerse = VerseTarget(location.scrollVerse, it.targetVerse.request + 1),
                 canNavigateBack = navigationBackStack.isNotEmpty(),
                 chapterPickerBook = null,
                 isSearchFocused = false,
@@ -136,122 +150,130 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 searchResults = if (clearSearch) SearchResults() else it.searchResults
             )
         }
-        if (clearSearch) {
-            searchQuery.value = ""
-        }
-        persistLocation(location)
+        if (clearSearch) searchQuery.value = ""
+        latestLocation = location
+        persistLocation()
     }
 
     fun navigateBack(): Boolean {
-        val previous = navigationBackStack.removeLastOrNull() ?: return false
-        val clamped = clampLocation(previous)
+        val location = clampLocation(navigationBackStack.removeLastOrNull() ?: return false)
         _uiState.update {
             it.copy(
-                currentLocation = clamped,
+                currentLocation = location,
+                targetVerse = VerseTarget(location.scrollVerse, it.targetVerse.request + 1),
                 canNavigateBack = navigationBackStack.isNotEmpty(),
                 chapterPickerBook = null,
                 isSearchFocused = false
             )
         }
-        persistLocation(clamped)
+        latestLocation = location
+        persistLocation()
         return true
     }
 
-    fun onVisibleVerseChanged(verse: Int) {
-        if (verse < 1) return
-        _uiState.update { state ->
-            if (state.currentLocation.scrollVerse == verse) {
-                state
-            } else {
-                state.copy(
-                    currentLocation = state.currentLocation.copy(scrollVerse = verse)
-                )
-            }
-        }
+    fun onReaderStopped(bookId: Int, chapter: Int, verse: Int) {
+        if (!preferencesLoaded || verse < 1 ||
+            latestLocation.bookId != bookId || latestLocation.chapter != chapter
+        ) return
+        latestLocation = latestLocation.copy(scrollVerse = verse)
+        persistLocation(debounce = true)
+    }
+
+    fun onReaderBackgrounded(bookId: Int, chapter: Int, verse: Int) {
+        onReaderStopped(bookId, chapter, verse)
+        flushPreferences()
     }
 
     fun onVerseSelectedInReader(verse: Int) {
         val current = _uiState.value.currentLocation
-        val newHighlight = if (current.highlightedVerse == verse) null else verse
-        val updated = current.copy(
-            highlightedVerse = newHighlight,
-            scrollVerse = verse
+        val updated = latestLocation.copy(
+            highlightedVerse = if (current.highlightedVerse == verse) null else verse
         )
-        _uiState.update { it.copy(currentLocation = updated) }
-        persistLocation(updated)
+        latestLocation = updated
+        // Keep the navigation target fixed when toggling a highlight.
+        _uiState.update {
+            it.copy(currentLocation = current.copy(highlightedVerse = updated.highlightedVerse))
+        }
+        persistLocation()
     }
 
     fun stepTextScale(delta: Float) {
-        val updated = (_uiState.value.textScale + delta).coerceIn(MIN_TEXT_SCALE, MAX_TEXT_SCALE)
-        _uiState.update { it.copy(textScale = updated) }
-        persistTextScale(updated, immediate = true)
+        setTextScale(_textScale.value + delta)
     }
 
     fun scaleTextByZoom(zoomFactor: Float) {
-        if (zoomFactor <= 0f || zoomFactor.isNaN()) return
-        val current = _uiState.value.textScale
-        val updated = (current * zoomFactor).coerceIn(MIN_TEXT_SCALE, MAX_TEXT_SCALE)
-        if (updated == current) return
-        _uiState.update { it.copy(textScale = updated) }
-        persistTextScale(updated, immediate = false)
+        if (zoomFactor.isFinite() && zoomFactor > 0f) {
+            setTextScale(_textScale.value * zoomFactor)
+        }
     }
 
-    fun resetTextScale() {
-        _uiState.update { it.copy(textScale = DEFAULT_TEXT_SCALE) }
-        persistTextScale(DEFAULT_TEXT_SCALE, immediate = true)
+    fun resetTextScale() = setTextScale(DEFAULT_TEXT_SCALE)
+
+    private fun setTextScale(scale: Float) {
+        val updated = scale.coerceIn(MIN_TEXT_SCALE, MAX_TEXT_SCALE)
+        _textScale.value = updated
+        saveScaleJob?.cancel()
+        saveScaleJob = viewModelScope.launch {
+            delay(500)
+            enqueuePreferences()
+        }
     }
 
     fun toggleTheme(currentlyDark: Boolean) {
-        val nextTheme = if (currentlyDark) ThemePreference.LIGHT else ThemePreference.DARK
-        _uiState.update { it.copy(themePreference = nextTheme) }
-        viewModelScope.launch {
-            preferencesRepository.saveThemePreference(nextTheme)
-        }
-    }
-
-    private fun persistTextScale(scale: Float, immediate: Boolean) {
-        saveScaleJob?.cancel()
-        saveScaleJob = viewModelScope.launch {
-            if (!immediate) {
-                delay(200.milliseconds)
-            }
-            preferencesRepository.saveTextScale(scale)
-        }
+        val theme = if (currentlyDark) ThemePreference.LIGHT else ThemePreference.DARK
+        _uiState.update { it.copy(themePreference = theme) }
+        persistenceScope.launch { preferencesRepository.saveThemePreference(theme) }
     }
 
     fun onChapterPageChanged(bookId: Int, chapter: Int) {
         if (!preferencesLoaded) return
         val current = _uiState.value.currentLocation
         if (bookId == current.bookId && chapter == current.chapter) return
-        val updated = clampLocation(
-            current.copy(
-                bookId = bookId,
-                chapter = chapter,
-                highlightedVerse = null,
-                scrollVerse = 1
+        val location = clampLocation(BibleLocation(bookId, chapter))
+        latestLocation = location
+        _uiState.update {
+            it.copy(
+                currentLocation = location,
+                targetVerse = VerseTarget(location.scrollVerse, it.targetVerse.request + 1)
             )
-        )
-        _uiState.update { it.copy(currentLocation = updated) }
-        persistLocation(updated)
-    }
-
-    private fun isSamePlace(a: BibleLocation, b: BibleLocation): Boolean {
-        return a.bookId == b.bookId &&
-            a.chapter == b.chapter &&
-            a.targetVerse == b.targetVerse
-    }
-
-    private fun persistLocation(location: BibleLocation) {
-        viewModelScope.launch {
-            preferencesRepository.saveLocation(location)
         }
+        persistLocation()
+    }
+
+    fun flushPreferences() {
+        if (!preferencesLoaded) return
+        saveLocationJob?.cancel()
+        saveScaleJob?.cancel()
+        enqueuePreferences()
+    }
+
+    override fun onCleared() {
+        flushPreferences()
+        pendingPreferences.close()
+        // This scope outlives viewModelScope long enough to finish the final DataStore write.
+        persistenceJob.complete()
+        super.onCleared()
+    }
+
+    private fun isSamePlace(a: BibleLocation, b: BibleLocation): Boolean =
+        a.bookId == b.bookId && a.chapter == b.chapter && a.targetVerse == b.targetVerse
+
+    private fun persistLocation(debounce: Boolean = false) {
+        if (!preferencesLoaded) return
+        saveLocationJob?.cancel()
+        saveLocationJob = viewModelScope.launch {
+            if (debounce) delay(500)
+            enqueuePreferences()
+        }
+    }
+
+    private fun enqueuePreferences() {
+        pendingPreferences.trySend(PendingPreferences(latestLocation, _textScale.value))
     }
 
     private fun clampLocation(location: BibleLocation): BibleLocation {
         val book = repository.bookById(location.bookId)
-        return location.copy(
-            chapter = min(max(location.chapter, 1), book.chapterCount)
-        )
+        return location.copy(bookId = book.id, chapter = location.chapter.coerceIn(1, book.chapterCount))
     }
 
     companion object {
@@ -260,20 +282,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         const val MAX_TEXT_SCALE = 2.0f
         const val DEFAULT_TEXT_SCALE = 1.0f
     }
+
+    private data class PendingPreferences(val location: BibleLocation, val textScale: Float)
 }
 
+@Immutable
 data class MainUiState(
     val books: List<BibleBook> = emptyList(),
     val currentLocation: BibleLocation = BibleLocation(),
+    val targetVerse: VerseTarget = VerseTarget(),
     val canNavigateBack: Boolean = false,
-    val textScale: Float = MainViewModel.DEFAULT_TEXT_SCALE,
     val themePreference: ThemePreference = ThemePreference.SYSTEM,
     val searchQuery: String = "",
     val searchResults: SearchResults = SearchResults(),
     val isSearchFocused: Boolean = false,
     val chapterPickerBook: BibleBook? = null
 )
-
-
-
-

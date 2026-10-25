@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -28,6 +29,16 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCE = ROOT / "tools" / "sources" / "kjv_biblesupersearch.txt"
 DEFAULT_JSONL = ROOT / "tools" / "generated" / "kjv_verses.jsonl"
 DEFAULT_DB = ROOT / "app" / "src" / "main" / "assets" / "kjv.db"
+_VERSE_MARKERS = str.maketrans("", "", "‹›[]¶,;")
+_NON_ALPHANUMERIC_VERSE_TEXT = re.compile(r"[^a-z0-9 ]")
+_WHITESPACE = re.compile(r"\s+")
+
+
+def normalize_verse_text(text: str) -> str:
+    """Match Kotlin SearchNormalizer.normalizeVerseQuery after stripping source markers."""
+    cleaned = text.translate(_VERSE_MARKERS).lower()
+    cleaned = _NON_ALPHANUMERIC_VERSE_TEXT.sub(" ", cleaned)
+    return _WHITESPACE.sub(" ", cleaned).strip()
 
 
 def load_jsonl_verses(path: Path) -> list[Verse]:
@@ -66,6 +77,9 @@ def create_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
         PRAGMA foreign_keys = ON;
+        PRAGMA user_version = 2;
+
+        DROP TABLE IF EXISTS verses_fts;
 
         CREATE TABLE books (
             id INTEGER PRIMARY KEY,
@@ -78,37 +92,36 @@ def create_schema(conn: sqlite3.Connection) -> None:
             chapter INTEGER NOT NULL,
             verse INTEGER NOT NULL,
             text TEXT NOT NULL,
+            text_norm TEXT NOT NULL,
             PRIMARY KEY (book_id, chapter, verse),
             FOREIGN KEY (book_id) REFERENCES books(id)
         );
 
         CREATE INDEX idx_verses_book_chapter ON verses(book_id, chapter);
         CREATE INDEX idx_verses_chapter_verse ON verses(chapter, verse);
+
+        CREATE VIRTUAL TABLE verses_fts4 USING fts4(text_norm, tokenize=unicode61);
         """
     )
 
 
 def populate_db(conn: sqlite3.Connection, verses: Sequence[Verse]) -> None:
+    ordered_verses = sorted(verses, key=lambda v: (v.book_id, v.chapter, v.verse))
     conn.executemany(
         "INSERT INTO books(id, name, chapter_count) VALUES(?, ?, ?)",
         [(i, name, chapter_count) for i, (name, chapter_count) in enumerate(BOOKS, start=1)],
     )
     conn.executemany(
-        "INSERT INTO verses(book_id, chapter, verse, text) VALUES(?, ?, ?, ?)",
-        [(v.book_id, v.chapter, v.verse, v.text) for v in verses],
+        "INSERT INTO verses(book_id, chapter, verse, text, text_norm) VALUES(?, ?, ?, ?, ?)",
+        [
+            (v.book_id, v.chapter, v.verse, v.text, normalize_verse_text(v.text))
+            for v in ordered_verses
+        ],
     )
-
-    # Optional FTS index for fast contains search in app queries.
-    try:
-        conn.execute(
-            "CREATE VIRTUAL TABLE verses_fts USING fts5(book_id UNINDEXED, chapter UNINDEXED, verse UNINDEXED, text, tokenize='unicode61')"
-        )
-        conn.execute(
-            "INSERT INTO verses_fts(book_id, chapter, verse, text) SELECT book_id, chapter, verse, text FROM verses"
-        )
-    except sqlite3.OperationalError:
-        # Keep import compatible even when local sqlite lacks FTS5.
-        pass
+    conn.execute(
+        "INSERT INTO verses_fts4(docid, text_norm) "
+        "SELECT rowid, text_norm FROM verses"
+    )
 
 
 def write_sqlite(db_path: Path, verses: Sequence[Verse]) -> None:
@@ -117,9 +130,11 @@ def write_sqlite(db_path: Path, verses: Sequence[Verse]) -> None:
         db_path.unlink()
 
     with contextlib.closing(sqlite3.connect(str(db_path))) as conn:
+        conn.execute("PRAGMA page_size = 4096")
         create_schema(conn)
         populate_db(conn, verses)
         conn.commit()
+        conn.execute("VACUUM")
 
 
 def run_verification(
@@ -213,5 +228,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
-

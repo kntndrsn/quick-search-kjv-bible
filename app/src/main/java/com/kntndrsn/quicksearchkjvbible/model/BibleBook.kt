@@ -1,5 +1,8 @@
-package com.rdp.biblequicksearchkjv.model
+package com.kntndrsn.quicksearchkjvbible.model
 
+import androidx.compose.runtime.Immutable
+
+@Immutable
 data class BibleBook(
     val id: Int,
     val name: String,
@@ -7,4 +10,3 @@ data class BibleBook(
     val chapterCount: Int,
     val aliases: List<String>
 )
-

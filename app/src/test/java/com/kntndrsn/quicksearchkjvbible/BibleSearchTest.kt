@@ -1,17 +1,21 @@
-package com.rdp.biblequicksearchkjv
+package com.kntndrsn.quicksearchkjvbible
 
-import com.rdp.biblequicksearchkjv.data.BibleReferenceParser
-import com.rdp.biblequicksearchkjv.data.BibleRepository
-import com.rdp.biblequicksearchkjv.data.BookCatalog
-import com.rdp.biblequicksearchkjv.data.SearchNormalizer
-import com.rdp.biblequicksearchkjv.model.BibleLocation
+import com.kntndrsn.quicksearchkjvbible.data.BibleReferenceParser
+import com.kntndrsn.quicksearchkjvbible.data.BibleRepository
+import com.kntndrsn.quicksearchkjvbible.data.BookCatalog
+import com.kntndrsn.quicksearchkjvbible.data.SampleBibleContent
+import com.kntndrsn.quicksearchkjvbible.data.SearchNormalizer
+import com.kntndrsn.quicksearchkjvbible.model.BibleLocation
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BibleSearchTest {
-    private val repository = BibleRepository()
+    private val repository = BibleRepository(null, SampleBibleContent.chapterVerses)
     private val parser = BibleReferenceParser(BookCatalog.books)
 
     @Test
@@ -39,19 +43,19 @@ class BibleSearchTest {
 
     @Test
     fun findsBookByPhoneticLikeInput() {
-        val result = repository.search("Jhn")
+        val result = repository.searchNavigation("Jhn")
         assertTrue(result.matchingBooks.any { it.name == "John" })
     }
 
     @Test
-    fun findsVerseMatchesForCommonQuery() {
+    fun findsVerseMatchesForCommonQuery() = runBlocking {
         val result = repository.search("faith")
         assertTrue(result.matchingVerses.isNotEmpty())
         assertTrue(result.matchingVerses.any { it.text.contains("faith", ignoreCase = true) })
     }
 
     @Test
-    fun preservesPronounIAndOrdinalsInVerseSearch() {
+    fun preservesPronounIAndOrdinalsInVerseSearch() = runBlocking {
         assertEquals(
             "i can do all things",
             SearchNormalizer.normalizeVerseQuery("I can do all things")
@@ -76,6 +80,34 @@ class BibleSearchTest {
         assertEquals(1, defaultLocation.chapter)
         assertEquals(1, defaultLocation.targetVerse)
     }
-}
 
+    @Test
+    fun verseTextNormalizationDeletesMarkers() {
+        assertEquals(
+            "the lord is my shepherd i shall not want",
+            SearchNormalizer.normalizeVerseText("\u00B6 A Psalm of David. The LORD [is] my shepherd; I shall not want.")
+                .removePrefix("a psalm of david ")
+        )
+        assertEquals("lord s house", SearchNormalizer.normalizeVerseText("LORD's house"))
+        assertEquals("ab", SearchNormalizer.normalizeVerseText("\u2039a\u203Ab"))
+    }
+
+    @Test
+    fun ftsMatchBuilderQuotesEachTokenWithPrefixOnLast() {
+        assertEquals("\"faith*\"", BibleRepository.buildFtsMatchQuery("faith"))
+        assertEquals("\"i\" \"can\" \"do\" \"all\" \"thin*\"", BibleRepository.buildFtsMatchQuery("i can do all thin"))
+        assertEquals("", BibleRepository.buildFtsMatchQuery(""))
+    }
+
+    @Test
+    fun chapterCacheIsPopulatedAndEvictsLeastRecentlyUsed() = runBlocking {
+        val repo = BibleRepository(null, SampleBibleContent.chapterVerses)
+        assertNull(repo.cachedChapter(43, 3))
+        val loaded = repo.chapterVerses(43, 3)
+        assertSame(loaded, repo.cachedChapter(43, 3))
+        for (chapter in 1..BibleRepository.CHAPTER_CACHE_SIZE) repo.prefetch(1, chapter)
+        assertNull(repo.cachedChapter(43, 3))
+        assertNotNull(repo.cachedChapter(1, 1))
+    }
+}
 

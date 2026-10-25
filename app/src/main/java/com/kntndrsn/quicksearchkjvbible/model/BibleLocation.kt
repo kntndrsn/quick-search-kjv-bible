@@ -1,5 +1,8 @@
-package com.rdp.biblequicksearchkjv.model
+package com.kntndrsn.quicksearchkjvbible.model
 
+import androidx.compose.runtime.Immutable
+
+@Immutable
 data class BibleLocation(
     val bookId: Int = 1,
     val chapter: Int = 1,
@@ -9,5 +12,3 @@ data class BibleLocation(
     val targetVerse: Int?
         get() = highlightedVerse ?: scrollVerse
 }
-
-

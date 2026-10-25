@@ -1,6 +1,6 @@
-package com.rdp.biblequicksearchkjv.data
+package com.kntndrsn.quicksearchkjvbible.data
 
-import com.rdp.biblequicksearchkjv.model.BibleVerse
+import com.kntndrsn.quicksearchkjvbible.model.BibleVerse
 
 object SampleBibleContent {
     private fun verses(bookId: Int, chapter: Int, vararg lines: Pair<Int, String>): List<BibleVerse> =
@@ -104,4 +104,3 @@ object SampleBibleContent {
 
     val searchableVerses: List<BibleVerse> = chapterVerses.values.flatten()
 }
-

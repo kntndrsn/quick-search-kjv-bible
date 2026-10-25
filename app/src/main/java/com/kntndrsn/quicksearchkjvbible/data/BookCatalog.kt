@@ -1,6 +1,6 @@
-package com.rdp.biblequicksearchkjv.data
+package com.kntndrsn.quicksearchkjvbible.data
 
-import com.rdp.biblequicksearchkjv.model.BibleBook
+import com.kntndrsn.quicksearchkjvbible.model.BibleBook
 
 object BookCatalog {
     val books: List<BibleBook> = listOf(
@@ -72,6 +72,40 @@ object BookCatalog {
         book(66, "Revelation", "Rev", 22, "revelation", "rev", "apocalypse")
     )
 
+    private val booksById: Array<BibleBook?> = arrayOfNulls<BibleBook>(books.maxOf { it.id } + 1).also { array ->
+        books.forEach { array[it.id] = it }
+    }
+
+    /** O(1) lookup; unknown ids fall back to Genesis (matches previous repository behavior). */
+    fun bookById(id: Int): BibleBook = booksById.getOrNull(id) ?: books.first()
+
+    internal class AliasKey(
+        val normalized: String,
+        val compact: String,
+        val soundex: String
+    )
+
+    internal class BookSearchEntry(
+        val book: BibleBook,
+        val aliases: Array<AliasKey>
+    )
+
+    /** Normalized/compact/soundex forms of every distinct alias, computed once on first use. */
+    internal val searchIndex: Array<BookSearchEntry> by lazy {
+        Array(books.size) { index ->
+            val book = books[index]
+            val candidates = (book.aliases + book.name + book.shortName).distinct()
+            BookSearchEntry(
+                book = book,
+                aliases = Array(candidates.size) { i ->
+                    val normalized = SearchNormalizer.normalize(candidates[i])
+                    val compact = SearchNormalizer.compactNormalized(normalized)
+                    AliasKey(normalized, compact, SearchNormalizer.soundexOfCompact(compact))
+                }
+            )
+        }
+    }
+
     private fun book(
         id: Int,
         name: String,
@@ -86,4 +120,3 @@ object BookCatalog {
         aliases = (aliases.toList() + name + shortName).distinct()
     )
 }
-

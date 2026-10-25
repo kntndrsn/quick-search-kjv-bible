@@ -8,6 +8,7 @@ These scripts verify that app-stored Bible content matches the source text exact
 - `import_kjv_to_sqlite.py` - builds `kjv.db` from JSONL and auto-verifies against source
 - `build_kjv_pipeline.py` - one command for `export -> import -> verify`
 - `test_kjv_integrity.py` - unit tests for parser/compare behavior
+- `test_import_kjv_to_sqlite.py` - SQLite schema/import checks and sample normalization parity checks
 
 ## Source expectations
 
@@ -35,6 +36,17 @@ python .\tools\kjv_integrity.py export-jsonl --source ".\tools\sources\kjv_bible
 ```
 
 `export-jsonl` writes canonical verse rows for indexing.
+
+The importer preserves the `books` columns and existing `verses` columns, adds
+`verses.text_norm TEXT NOT NULL`, and sets `PRAGMA user_version=2`. Verse rows
+are inserted in canonical book/chapter/verse order so their SQLite rowids are
+stable. `text_norm` is built by deleting source markup (`‹`, `›`, `[`, `]`,
+`¶`, `,`, `;`) and then applying the Kotlin
+`SearchNormalizer.normalizeVerseQuery` rules: lowercase, replace characters
+outside `[a-z0-9 ]` with spaces, collapse whitespace, and trim. The FTS4
+virtual table `verses_fts4(text_norm, tokenize=unicode61)` uses each verse's
+rowid as `docid`; the former FTS5 `verses_fts` table is not created. The asset
+is written with a 4096-byte page size and vacuumed before it is closed.
 
 ## Verify indexed app data
 
@@ -66,6 +78,12 @@ python .\tools\kjv_integrity.py verify-jsonl --source ".\tools\sources\kjv_bible
 
 Both commands fail fast and print mismatches with references.
 
+`python -m pytest tools` also checks ten real sample verses against expected
+Kotlin normalization results, including bracketed text and red-letter markers
+in Matthew 5:3, and verifies the same values are persisted in SQLite. This is
+a Python-side mirror of the Kotlin normalizer contract; run the app's JVM unit
+tests as well to exercise the Kotlin implementation itself.
+
 ## Current snapshot note
 
 Running `parse-stats` on `tools/sources/kjv_biblesupersearch.txt` yields all `31102` verses.
@@ -73,6 +91,5 @@ Running `parse-stats` on `tools/sources/kjv_biblesupersearch.txt` yields all `31
 ## Distribution reminder
 
 - Keep source provenance records (`source_sha256` and manifest) when rebuilding assets.
-
 
 

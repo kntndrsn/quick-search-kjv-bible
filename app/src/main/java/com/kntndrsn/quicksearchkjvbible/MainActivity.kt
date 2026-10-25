@@ -1,21 +1,30 @@
-package com.rdp.biblequicksearchkjv
+package com.kntndrsn.quicksearchkjvbible
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import com.rdp.biblequicksearchkjv.ui.BibleQuickSearchApp
+import androidx.activity.viewModels
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import com.kntndrsn.quicksearchkjvbible.ui.BibleQuickSearchApp
 
 class MainActivity : ComponentActivity() {
+    private val mainViewModel: MainViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge()
+        val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
+        splashScreen.setKeepOnScreenCondition { !mainViewModel.isReady.value }
+        enableEdgeToEdge()
         setContent {
-            BibleQuickSearchApp()
+            BibleQuickSearchApp(mainViewModel)
         }
     }
+
+    override fun onStop() {
+        mainViewModel.flushPreferences()
+        super.onStop()
+    }
 }
-
-
 
 
