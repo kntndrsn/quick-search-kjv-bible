@@ -102,7 +102,7 @@ import com.kntndrsn.quicksearchkjvbible.model.SearchResults
 import com.kntndrsn.quicksearchkjvbible.ui.theme.BibleQuickSearchTheme
 import kotlin.math.roundToInt
 
-@OptIn(ExperimentalMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun BibleQuickSearchApp(viewModel: MainViewModel = viewModel()) {
     val isReady by viewModel.isReady.collectAsStateWithLifecycle()
@@ -752,8 +752,7 @@ private fun plainVerseText(raw: String): String = buildString(raw.length) {
 internal fun buildStyledVerseAnnotatedString(
     raw: String,
     christWordColor: Color,
-    pilcrowColor: Color,
-    paragraphBreakBeforePilcrow: Boolean
+    pilcrowColor: Color
 ): AnnotatedString {
     fun styleFor(isChristWord: Boolean, isItalic: Boolean): SpanStyle? {
         val hasStyling = isChristWord || isItalic
@@ -800,7 +799,7 @@ internal fun buildStyledVerseAnnotatedString(
                 }
                 '¶' -> {
                     flush()
-                    if (paragraphBreakBeforePilcrow && length > 0) {
+                    if (length > 0) {
                         append('\n')
                     }
                     val start = length

@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.milliseconds
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -52,9 +53,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         persistenceScope.launch {
-            for (pending in pendingPreferences) {
-                preferencesRepository.saveLocation(pending.location)
-                preferencesRepository.saveTextScale(pending.textScale)
+            for ((location, textScale) in pendingPreferences) {
+                preferencesRepository.saveLocation(location)
+                preferencesRepository.saveTextScale(textScale)
             }
         }
         viewModelScope.launch {
@@ -83,7 +84,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update {
                     if (it.searchQuery == query) it.copy(searchResults = navigation) else it
                 }
-                delay(120)
+                delay(120.milliseconds)
                 query to navigation.copy(matchingVerses = repository.searchVerseText(query))
             }.flowOn(Dispatchers.Default).collectLatest { (query, results) ->
                 _uiState.update {
@@ -214,7 +215,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _textScale.value = updated
         saveScaleJob?.cancel()
         saveScaleJob = viewModelScope.launch {
-            delay(500)
+            delay(500.milliseconds)
             enqueuePreferences()
         }
     }
@@ -262,7 +263,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!preferencesLoaded) return
         saveLocationJob?.cancel()
         saveLocationJob = viewModelScope.launch {
-            if (debounce) delay(500)
+            if (debounce) delay(500.milliseconds)
             enqueuePreferences()
         }
     }

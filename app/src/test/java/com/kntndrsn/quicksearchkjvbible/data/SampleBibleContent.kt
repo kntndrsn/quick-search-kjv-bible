@@ -101,6 +101,4 @@ object SampleBibleContent {
             4 to "And God shall wipe away all tears from their eyes; and there shall be no more death."
         )
     )
-
-    val searchableVerses: List<BibleVerse> = chapterVerses.values.flatten()
 }

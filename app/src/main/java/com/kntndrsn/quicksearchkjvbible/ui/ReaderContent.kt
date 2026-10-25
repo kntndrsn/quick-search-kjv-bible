@@ -1,7 +1,6 @@
 package com.kntndrsn.quicksearchkjvbible.ui
 
 import android.annotation.SuppressLint
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -85,7 +84,6 @@ private class ChapterIndex(books: List<BibleBook>) {
 internal fun verseKey(bookId: Int, chapter: Int, verse: Int): Int =
     bookId * 1_000_000 + chapter * 1_000 + verse
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun ReaderPager(
     repository: BibleRepository,
@@ -120,7 +118,7 @@ internal fun ReaderPager(
                 if (requested != null) return@collectLatest
                 chapterChanged(index.bookId(page), index.chapter(page))
                 listOf(page - 1, page + 1).filter { it in 0 until index.size }.forEach { adjacent ->
-                    launch { repository.prefetch(index.bookId(adjacent), index.chapter(adjacent)) }
+                    this@LaunchedEffect.launch { repository.prefetch(index.bookId(adjacent), index.chapter(adjacent)) }
                 }
             }
     }
@@ -234,7 +232,7 @@ internal fun ReaderChapter(
                     append(verse.verse.toString())
                     addStyle(SpanStyle(color = numberColor, fontWeight = FontWeight.Bold, fontSize = 0.78.em), start, length)
                     append("  ")
-                    append(buildStyledVerseAnnotatedString(verse.text, christColor, numberColor, true))
+                    append(buildStyledVerseAnnotatedString(verse.text, christColor, numberColor))
                 })
             })
         }

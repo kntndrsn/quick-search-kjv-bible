@@ -17581,9 +17581,9 @@ SPLcom/kntndrsn/quicksearchkjvbible/ui/BibleQuickSearchAppKt;->access$SearchSect
 SPLcom/kntndrsn/quicksearchkjvbible/ui/BibleQuickSearchAppKt;->access$TableOfContentsButton(Lkotlin/jvm/functions/Function0;Landroidx/compose/ui/Modifier;Landroidx/compose/runtime/Composer;II)V
 SPLcom/kntndrsn/quicksearchkjvbible/ui/BibleQuickSearchAppKt;->access$TextScaleControls(Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;Landroidx/compose/runtime/Composer;I)V
 PLcom/kntndrsn/quicksearchkjvbible/ui/BibleQuickSearchAppKt;->access$plainVerseText(Ljava/lang/String;)Ljava/lang/String;
-HSPLcom/kntndrsn/quicksearchkjvbible/ui/BibleQuickSearchAppKt;->buildStyledVerseAnnotatedString-IbeAmgk(Ljava/lang/String;JJZ)Landroidx/compose/ui/text/AnnotatedString;
-SPLcom/kntndrsn/quicksearchkjvbible/ui/BibleQuickSearchAppKt;->buildStyledVerseAnnotatedString_IbeAmgk$lambda$40$flush(Ljava/lang/StringBuilder;Landroidx/compose/ui/text/AnnotatedString$Builder;Lkotlin/jvm/internal/Ref$BooleanRef;Lkotlin/jvm/internal/Ref$BooleanRef;J)V
-SPLcom/kntndrsn/quicksearchkjvbible/ui/BibleQuickSearchAppKt;->buildStyledVerseAnnotatedString_IbeAmgk$styleFor(JZZ)Landroidx/compose/ui/text/SpanStyle;
+HSPLcom/kntndrsn/quicksearchkjvbible/ui/BibleQuickSearchAppKt;->buildStyledVerseAnnotatedString-WkMS-hQ(Ljava/lang/String;JJ)Landroidx/compose/ui/text/AnnotatedString;
+SPLcom/kntndrsn/quicksearchkjvbible/ui/BibleQuickSearchAppKt;->buildStyledVerseAnnotatedString_WkMS_hQ$lambda$118$flush(Ljava/lang/StringBuilder;Landroidx/compose/ui/text/AnnotatedString$Builder;Lkotlin/jvm/internal/Ref$BooleanRef;Lkotlin/jvm/internal/Ref$BooleanRef;J)V
+SPLcom/kntndrsn/quicksearchkjvbible/ui/BibleQuickSearchAppKt;->buildStyledVerseAnnotatedString_WkMS_hQ$styleFor(JZZ)Landroidx/compose/ui/text/SpanStyle;
 PLcom/kntndrsn/quicksearchkjvbible/ui/BibleQuickSearchAppKt;->plainVerseText(Ljava/lang/String;)Ljava/lang/String;
 Lcom/kntndrsn/quicksearchkjvbible/ui/BibleQuickSearchAppKt$$ExternalSyntheticLambda0;
 SPLcom/kntndrsn/quicksearchkjvbible/ui/BibleQuickSearchAppKt$$ExternalSyntheticLambda0;-><init>(Lcom/kntndrsn/quicksearchkjvbible/MainViewModel;II)V

@@ -105,10 +105,9 @@ object SearchNormalizer {
             if (!s.startsWith(word)) continue
             val end = word.length
             if (end >= s.length) return -1
-            val next = s[end]
-            return when {
-                next == ' ' -> end + 1
-                next in 'a'..'z' -> end
+            return when (val next = s[end]) {
+                ' ' -> end + 1
+                in 'a'..'z' -> end
                 else -> -1
             }
         }
