@@ -2,10 +2,6 @@ package com.kntndrsn.quicksearchkjvbible.ui
 
 import android.annotation.SuppressLint
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.calculateCentroid
-import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -24,7 +20,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -34,10 +29,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -51,12 +42,12 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.kntndrsn.quicksearchkjvbible.MainViewModel
 import com.kntndrsn.quicksearchkjvbible.data.BibleRepository
 import com.kntndrsn.quicksearchkjvbible.model.BibleBook
 import com.kntndrsn.quicksearchkjvbible.model.BibleVerse
 import com.kntndrsn.quicksearchkjvbible.model.VerseTarget
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -117,61 +108,26 @@ internal fun ReaderPager(
             .collectLatest { (page, requested) ->
                 if (requested != null) return@collectLatest
                 chapterChanged(index.bookId(page), index.chapter(page))
-                listOf(page - 1, page + 1).filter { it in 0 until index.size }.forEach { adjacent ->
-                    this@LaunchedEffect.launch { repository.prefetch(index.bookId(adjacent), index.chapter(adjacent)) }
+            }
+    }
+    LaunchedEffect(repository, pagerState, index) {
+        snapshotFlow { pagerState.currentPage }
+            .distinctUntilChanged()
+            .collectLatest { page ->
+                coroutineScope {
+                    listOf(page - 1, page + 1).filter { it in 0 until index.size }.forEach { adjacent ->
+                        launch { repository.prefetch(index.bookId(adjacent), index.chapter(adjacent)) }
+                    }
                 }
             }
     }
 
-    var gestureScale by remember { mutableFloatStateOf(1f) }
-    var gestureOrigin by remember { mutableStateOf(TransformOrigin.Center) }
-    val currentScale by rememberUpdatedState(textScale)
-    val commitZoom by rememberUpdatedState(onZoomCommitted)
     HorizontalPager(
         state = pagerState,
         beyondViewportPageCount = 1,
         modifier = modifier
             .testTag("chapter_pager")
-            .graphicsLayer {
-                scaleX = gestureScale
-                scaleY = gestureScale
-                transformOrigin = gestureOrigin
-            }
-            .pointerInput(Unit) {
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    var zooming = false
-                    var totalZoom = 1f
-                    val initialScale = currentScale()
-                    try {
-                        do {
-                            val event = awaitPointerEvent(PointerEventPass.Initial)
-                            if (event.changes.count { it.pressed } >= 2) {
-                                val zoom = event.calculateZoom()
-                                if (zoom.isFinite() && zoom > 0f) {
-                                    if (!zooming) {
-                                        val centroid = event.calculateCentroid()
-                                        gestureOrigin = TransformOrigin(
-                                            (centroid.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
-                                            (centroid.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f)
-                                        )
-                                    }
-                                    zooming = true
-                                    totalZoom = (totalZoom * zoom).coerceIn(
-                                        MainViewModel.MIN_TEXT_SCALE / initialScale,
-                                        MainViewModel.MAX_TEXT_SCALE / initialScale
-                                    )
-                                    gestureScale = totalZoom
-                                }
-                            }
-                            if (zooming) event.changes.forEach { it.consume() }
-                        } while (event.changes.any { it.pressed })
-                    } finally {
-                        gestureScale = 1f
-                        if (zooming && totalZoom != 1f) commitZoom(totalZoom)
-                    }
-                }
-            }
+            .pinchToZoom(textScale, onZoomCommitted)
     ) { page ->
         val pageBook = index.bookId(page)
         val pageChapter = index.chapter(page)
@@ -220,11 +176,7 @@ internal fun ReaderChapter(
     }
     val christColor = MaterialTheme.colorScheme.error
     val numberColor = MaterialTheme.colorScheme.primary
-    val chapterText by produceState(ChapterText(), verses, christColor, numberColor, isSettled) {
-        if (!isSettled) {
-            this.value = ChapterText()
-            return@produceState
-        }
+    val chapterText by produceState(ChapterText(), verses, christColor, numberColor) {
         this.value = withContext(Dispatchers.Default) {
             ChapterText(verses.map { verse ->
                 ReaderVerseText(verse, buildAnnotatedString {

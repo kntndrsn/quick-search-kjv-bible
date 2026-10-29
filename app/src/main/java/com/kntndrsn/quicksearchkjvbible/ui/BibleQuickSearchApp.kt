@@ -40,6 +40,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Toc
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DarkMode
@@ -94,6 +95,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kntndrsn.quicksearchkjvbible.MainViewModel
 import com.kntndrsn.quicksearchkjvbible.data.BibleRepository
+import com.kntndrsn.quicksearchkjvbible.data.SearchNormalizer
 import com.kntndrsn.quicksearchkjvbible.data.ThemePreference
 import com.kntndrsn.quicksearchkjvbible.model.BibleBook
 import com.kntndrsn.quicksearchkjvbible.model.BibleVerse
@@ -102,7 +104,7 @@ import com.kntndrsn.quicksearchkjvbible.model.SearchResults
 import com.kntndrsn.quicksearchkjvbible.ui.theme.BibleQuickSearchTheme
 import kotlin.math.roundToInt
 
-@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun BibleQuickSearchApp(viewModel: MainViewModel = viewModel()) {
     val isReady by viewModel.isReady.collectAsStateWithLifecycle()
@@ -124,6 +126,7 @@ fun BibleQuickSearchApp(viewModel: MainViewModel = viewModel()) {
     val currentBook = repository.bookById(uiState.currentLocation.bookId)
 
     val isSearchActive = uiState.isSearchFocused || uiState.searchQuery.isNotBlank()
+    var isFullPageSearch by rememberSaveable(uiState.searchQuery) { mutableStateOf(false) }
 
     BackHandler(
         enabled = isTableOfContentsVisible || isSearchActive || uiState.canNavigateBack
@@ -152,7 +155,37 @@ fun BibleQuickSearchApp(viewModel: MainViewModel = viewModel()) {
             Scaffold(
                 modifier = Modifier.fillMaxSize(),
                 topBar = {
-                    ReaderTopBar(
+                    if (isFullPageSearch) {
+                        TopAppBar(
+                            title = {
+                                Text("Search results", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            },
+                            windowInsets = TopAppBarDefaults.windowInsets.union(
+                                WindowInsets.displayCutout.only(
+                                    WindowInsetsSides.Top + WindowInsetsSides.Horizontal
+                                )
+                            ),
+                            navigationIcon = {
+                                IconButton(onClick = {
+                                    focusManager.clearFocus()
+                                    viewModel.dismissSearch()
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                        contentDescription = "Close search results"
+                                    )
+                                }
+                            },
+                            actions = {
+                                TextScaleControls(
+                                    textScale = deferredScale,
+                                    onDecrease = { viewModel.stepTextScale(-0.1f) },
+                                    onReset = viewModel::resetTextScale,
+                                    onIncrease = { viewModel.stepTextScale(0.1f) }
+                                )
+                            }
+                        )
+                    } else ReaderTopBar(
                         book = currentBook,
                         chapter = uiState.currentLocation.chapter,
                         isDarkTheme = isDarkTheme,
@@ -180,32 +213,21 @@ fun BibleQuickSearchApp(viewModel: MainViewModel = viewModel()) {
                             isTableOfContentsVisible = !isTableOfContentsVisible
                         },
                         onQueryChange = viewModel::updateSearchQuery,
-                        onFocusChanged = viewModel::updateSearchFocus,
+                        onFocusChanged = { isFocused ->
+                            if (isFocused) {
+                                isTableOfContentsVisible = false
+                                viewModel.dismissChapterPicker()
+                            }
+                            viewModel.updateSearchFocus(isFocused)
+                        },
                         onClear = {
                             viewModel.updateSearchQuery("")
                         },
                         onSearchSubmit = {
-                            val refMatch = uiState.searchResults.referenceMatch
-                            val firstBook = uiState.searchResults.matchingBooks.firstOrNull()
-                            val firstVerse = uiState.searchResults.matchingVerses.firstOrNull()
-                            when {
-                                refMatch != null -> {
-                                    focusManager.clearFocus()
-                                    viewModel.openChapter(refMatch.book, refMatch.chapter, refMatch.verse)
-                                }
-                                firstVerse != null -> {
-                                    focusManager.clearFocus()
-                                    val book = repository.bookById(firstVerse.bookId)
-                                    viewModel.openChapter(book, firstVerse.chapter, firstVerse.verse)
-                                }
-                                firstBook != null -> {
-                                    focusManager.clearFocus()
-                                    viewModel.openBookPicker(firstBook)
-                                }
-                                else -> {
-                                    focusManager.clearFocus()
-                                }
+                            if (uiState.searchQuery.isNotBlank()) {
+                                isFullPageSearch = true
                             }
+                            focusManager.clearFocus()
                         }
                     )
                 },
@@ -234,13 +256,20 @@ fun BibleQuickSearchApp(viewModel: MainViewModel = viewModel()) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                            .padding(
+                                horizontal = if (isFullPageSearch) 0.dp else 16.dp,
+                                vertical = if (isFullPageSearch) 0.dp else 12.dp
+                            ),
                         contentAlignment = Alignment.BottomCenter
                     ) {
                         if (isSearchActive) SearchResultsPanel(
                             results = uiState.searchResults,
+                            query = uiState.searchQuery,
                             repository = repository,
                             isDarkTheme = isDarkTheme,
+                            isFullPage = isFullPageSearch,
+                            textScale = deferredScale,
+                            onZoomCommitted = viewModel::scaleTextByZoom,
                             modifier = Modifier.fillMaxWidth(),
                             onReferenceSelected = { match ->
                                 focusManager.clearFocus()
@@ -637,8 +666,12 @@ private fun SearchBox(
 @Composable
 private fun SearchResultsPanel(
     results: SearchResults,
+    query: String,
     repository: BibleRepository,
     isDarkTheme: Boolean,
+    isFullPage: Boolean,
+    textScale: () -> Float,
+    onZoomCommitted: (Float) -> Unit,
     modifier: Modifier = Modifier,
     onReferenceSelected: (ReferenceMatch) -> Unit,
     onBookSelected: (BibleBook) -> Unit,
@@ -648,19 +681,38 @@ private fun SearchResultsPanel(
         results.matchingBooks.isNotEmpty() ||
         results.matchingVerses.isNotEmpty()
 
-    if (!hasResults) return
+    if (!hasResults && !isFullPage) return
+
+    val matchPattern = remember(query) {
+        SearchNormalizer.normalizeVerseQuery(query).split(' ')
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .sortedByDescending { it.length }
+            .takeIf { it.isNotEmpty() }
+            ?.joinToString("|") { Regex.escape(it) }
+            ?.let { Regex(it, RegexOption.IGNORE_CASE) }
+    }
+    val matchStyle = SpanStyle(
+        background = MaterialTheme.colorScheme.secondaryContainer,
+        color = MaterialTheme.colorScheme.onSecondaryContainer,
+        fontWeight = FontWeight.Bold
+    )
 
     Card(
-        modifier = modifier.heightIn(max = 260.dp),
-        shape = RoundedCornerShape(20.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
-        border = if (isDarkTheme) {
+        modifier = if (isFullPage) {
+            modifier.fillMaxSize().testTag("search_results_page")
+        } else {
+            modifier.heightIn(max = 260.dp)
+        },
+        shape = RoundedCornerShape(if (isFullPage) 0.dp else 20.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isFullPage) 0.dp else 8.dp),
+        border = if (isDarkTheme && !isFullPage) {
             BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         } else {
             null
         },
         colors = CardDefaults.cardColors(
-            containerColor = if (isDarkTheme) {
+            containerColor = if (isDarkTheme && !isFullPage) {
                 Color(0xFF2E3138)
             } else {
                 MaterialTheme.colorScheme.surface
@@ -668,16 +720,27 @@ private fun SearchResultsPanel(
         )
     ) {
         LazyColumn(
-            contentPadding = PaddingValues(vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-            modifier = Modifier.fillMaxWidth().testTag("search_results")
+            contentPadding = PaddingValues(vertical = 4.dp),
+            modifier = (if (isFullPage) Modifier.fillMaxSize() else Modifier.fillMaxWidth())
+                .testTag("search_results")
+                .pinchToZoom(textScale, onZoomCommitted)
         ) {
+            if (!hasResults) {
+                item(key = "empty") {
+                    Text(
+                        text = "No results found.",
+                        style = MaterialTheme.typography.bodyMedium.scaledBy(textScale()),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(20.dp)
+                    )
+                }
+            }
             results.referenceMatch?.let { match ->
                 item(key = "reference", contentType = "reference") {
-                    SearchSectionTitle("Reference")
+                    SearchSectionTitle("Reference", textScale)
                     SearchRow(
                         title = match.label,
-                        subtitle = "Open chapter for reading${match.verse?.let { ", highlight verse $it" } ?: ""}",
+                        textScale = textScale,
                         modifier = Modifier.testTag("search_reference_result"),
                         onClick = { onReferenceSelected(match) }
                     )
@@ -685,23 +748,26 @@ private fun SearchResultsPanel(
             }
 
             if (results.matchingBooks.isNotEmpty()) {
-                item(key = "books_header", contentType = "header") { SearchSectionTitle("Books") }
+                item(key = "books_header", contentType = "header") { SearchSectionTitle("Books", textScale) }
                 items(results.matchingBooks, key = { it.id }, contentType = { "book" }) { book ->
                     SearchRow(
                         title = book.name,
-                        subtitle = "Tap to pick a chapter quickly",
+                        textScale = textScale,
                         onClick = { onBookSelected(book) }
                     )
                 }
             }
 
             if (results.matchingVerses.isNotEmpty()) {
-                item(key = "verses_header", contentType = "header") { SearchSectionTitle("Verses") }
+                item(key = "verses_header", contentType = "header") { SearchSectionTitle("Verses", textScale) }
                 items(results.matchingVerses, key = { verseKey(it.bookId, it.chapter, it.verse) }, contentType = { "verse" }) { verse ->
                     val book = repository.bookById(verse.bookId)
                     SearchRow(
                         title = "${book.name} ${verse.chapter}:${verse.verse}",
-                        subtitle = plainVerseText(verse.text),
+                        textScale = textScale,
+                        subtitle = remember(verse.text, matchPattern, matchStyle) {
+                            buildSearchVerseAnnotatedString(verse.text, matchPattern, matchStyle)
+                        },
                         onClick = { onVerseSelected(verse) }
                     )
                 }
@@ -711,42 +777,67 @@ private fun SearchResultsPanel(
 }
 
 @Composable
-private fun SearchSectionTitle(title: String) {
+private fun SearchSectionTitle(title: String, textScale: () -> Float) {
     Text(
         text = title,
-        style = MaterialTheme.typography.labelLarge,
+        style = MaterialTheme.typography.labelLarge.scaledBy(textScale()),
         color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
     )
 }
 
 @Composable
 private fun SearchRow(
     title: String,
-    subtitle: String,
+    textScale: () -> Float,
+    subtitle: AnnotatedString? = null,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .heightIn(min = 48.dp)
             .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 12.dp)
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.Center
     ) {
-        Text(text = title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-        Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = subtitle,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
+            text = title,
+            style = MaterialTheme.typography.titleSmall.scaledBy(textScale()),
+            fontWeight = FontWeight.SemiBold
         )
+        if (subtitle != null) {
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyMedium.scaledBy(textScale()),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 
+private fun TextStyle.scaledBy(scale: Float): TextStyle = copy(
+    fontSize = fontSize * scale,
+    lineHeight = lineHeight * scale
+)
+
 private fun plainVerseText(raw: String): String = buildString(raw.length) {
     raw.forEach { if (it != '‹' && it != '›' && it != '[' && it != ']') append(it) }
+}
+
+internal fun buildSearchVerseAnnotatedString(
+    raw: String,
+    matchPattern: Regex?,
+    matchStyle: SpanStyle
+): AnnotatedString = buildAnnotatedString {
+    val text = plainVerseText(raw)
+    append(text)
+    matchPattern?.findAll(text)?.forEach { match ->
+        addStyle(matchStyle, match.range.first, match.range.last + 1)
+    }
 }
 
 internal fun buildStyledVerseAnnotatedString(
@@ -880,7 +971,8 @@ private fun ChapterPickerDialog(
                             tonalElevation = 2.dp,
                             modifier = Modifier
                                 .size(width = 56.dp, height = 44.dp)
-                                .clickable { onChapterSelected(chapter) }
+                                .clickable { onChapterSelected(chapter) },
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Text(chapter.toString(), style = MaterialTheme.typography.titleMedium)
@@ -892,6 +984,3 @@ private fun ChapterPickerDialog(
         }
     )
 }
-
-
-
