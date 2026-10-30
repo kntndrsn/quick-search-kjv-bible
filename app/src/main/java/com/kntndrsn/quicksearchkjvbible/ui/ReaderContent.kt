@@ -87,7 +87,7 @@ internal fun ReaderPager(
     onChapterChanged: (Int, Int) -> Unit,
     onReaderStopped: (Int, Int, Int) -> Unit,
     onReaderBackgrounded: (Int, Int, Int) -> Unit,
-    onZoomCommitted: (Float) -> Unit,
+    onZoom: (Float) -> Unit,
     onVerseSelected: (Int) -> Unit
 ) {
     val index = remember(repository) { ChapterIndex(repository.books()) }
@@ -127,7 +127,7 @@ internal fun ReaderPager(
         beyondViewportPageCount = 1,
         modifier = modifier
             .testTag("chapter_pager")
-            .pinchToZoom(textScale, onZoomCommitted)
+            .pinchToZoom(onZoom)
     ) { page ->
         val pageBook = index.bookId(page)
         val pageChapter = index.chapter(page)

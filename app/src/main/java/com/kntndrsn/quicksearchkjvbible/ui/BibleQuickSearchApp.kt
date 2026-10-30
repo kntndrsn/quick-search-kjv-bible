@@ -249,7 +249,7 @@ fun BibleQuickSearchApp(viewModel: MainViewModel = viewModel()) {
                         onChapterChanged = viewModel::onChapterPageChanged,
                         onReaderStopped = viewModel::onReaderStopped,
                         onReaderBackgrounded = viewModel::onReaderBackgrounded,
-                        onZoomCommitted = viewModel::scaleTextByZoom,
+                        onZoom = viewModel::scaleTextByZoom,
                         onVerseSelected = viewModel::onVerseSelectedInReader
                     )
 
@@ -269,7 +269,7 @@ fun BibleQuickSearchApp(viewModel: MainViewModel = viewModel()) {
                             isDarkTheme = isDarkTheme,
                             isFullPage = isFullPageSearch,
                             textScale = deferredScale,
-                            onZoomCommitted = viewModel::scaleTextByZoom,
+                            onZoom = viewModel::scaleTextByZoom,
                             modifier = Modifier.fillMaxWidth(),
                             onReferenceSelected = { match ->
                                 focusManager.clearFocus()
@@ -671,7 +671,7 @@ private fun SearchResultsPanel(
     isDarkTheme: Boolean,
     isFullPage: Boolean,
     textScale: () -> Float,
-    onZoomCommitted: (Float) -> Unit,
+    onZoom: (Float) -> Unit,
     modifier: Modifier = Modifier,
     onReferenceSelected: (ReferenceMatch) -> Unit,
     onBookSelected: (BibleBook) -> Unit,
@@ -723,7 +723,7 @@ private fun SearchResultsPanel(
             contentPadding = PaddingValues(vertical = 4.dp),
             modifier = (if (isFullPage) Modifier.fillMaxSize() else Modifier.fillMaxWidth())
                 .testTag("search_results")
-                .pinchToZoom(textScale, onZoomCommitted)
+                .pinchToZoom(onZoom)
         ) {
             if (!hasResults) {
                 item(key = "empty") {
