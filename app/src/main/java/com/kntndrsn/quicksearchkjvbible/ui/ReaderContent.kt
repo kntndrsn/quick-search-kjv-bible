@@ -34,7 +34,9 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
@@ -44,7 +46,9 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.kntndrsn.quicksearchkjvbible.data.BibleRepository
 import com.kntndrsn.quicksearchkjvbible.model.BibleBook
+import com.kntndrsn.quicksearchkjvbible.model.BibleHeading
 import com.kntndrsn.quicksearchkjvbible.model.BibleVerse
+import com.kntndrsn.quicksearchkjvbible.model.HeadingType
 import com.kntndrsn.quicksearchkjvbible.model.VerseTarget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
@@ -148,7 +152,18 @@ internal fun ReaderPager(
 }
 
 @Immutable
-private data class ReaderVerseText(val verse: BibleVerse, val text: AnnotatedString)
+private data class ReaderVerseText(
+    val verse: BibleVerse,
+    val text: AnnotatedString,
+    val headings: List<ReaderHeadingText> = emptyList()
+)
+
+@Immutable
+private data class ReaderHeadingText(val type: HeadingType, val text: AnnotatedString)
+
+/** Display label for a heading: acrostic titles are prefixed with their Hebrew letter. */
+internal fun headingLabel(heading: BibleHeading): String =
+    heading.letter?.let { "$it ${heading.text}" } ?: heading.text
 
 @Immutable
 private data class ChapterText(val verses: List<ReaderVerseText> = emptyList())
@@ -179,13 +194,19 @@ internal fun ReaderChapter(
     val chapterText by produceState(ChapterText(), verses, christColor, numberColor) {
         this.value = withContext(Dispatchers.Default) {
             ChapterText(verses.map { verse ->
+                val headings = verse.headings.map { heading ->
+                    ReaderHeadingText(
+                        heading.type,
+                        buildStyledVerseAnnotatedString(headingLabel(heading), christColor)
+                    )
+                }
                 ReaderVerseText(verse, buildAnnotatedString {
                     val start = length
                     append(verse.verse.toString())
                     addStyle(SpanStyle(color = numberColor, fontWeight = FontWeight.Bold, fontSize = 0.78.em), start, length)
                     append("  ")
-                    append(buildStyledVerseAnnotatedString(verse.text, christColor, numberColor))
-                })
+                    append(buildStyledVerseAnnotatedString(verse.text, christColor))
+                }, headings)
             })
         }
     }
@@ -286,6 +307,58 @@ private fun ChapterHeader(bookName: String, chapter: Int) {
 
 @Composable
 private fun ReaderVerse(
+    verse: ReaderVerseText,
+    highlighted: Boolean,
+    style: TextStyle,
+    verticalPadding: Dp,
+    highlightColor: androidx.compose.ui.graphics.Color,
+    onVerseSelected: (Int) -> Unit
+) {
+    if (verse.headings.isEmpty()) {
+        ReaderVerseBody(verse, highlighted, style, verticalPadding, highlightColor, onVerseSelected)
+        return
+    }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        verse.headings.forEach { heading -> ReaderHeading(heading, style) }
+        ReaderVerseBody(verse, highlighted, style, verticalPadding, highlightColor, onVerseSelected)
+    }
+}
+
+@Composable
+private fun ReaderHeading(heading: ReaderHeadingText, verseStyle: TextStyle) {
+    when (heading.type) {
+        HeadingType.PSALM -> Text(
+            text = heading.text,
+            style = verseStyle.copy(
+                fontSize = verseStyle.fontSize * 0.9f,
+                lineHeight = verseStyle.lineHeight * 0.9f,
+                fontStyle = FontStyle.Normal
+            ),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("reader_heading_psalm")
+                .padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 6.dp)
+        )
+        HeadingType.ACROSTIC -> Text(
+            text = heading.text,
+            style = verseStyle.copy(
+                fontWeight = FontWeight.Bold,
+                fontStyle = FontStyle.Normal,
+                letterSpacing = 0.08.em
+            ),
+            color = MaterialTheme.colorScheme.primary,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("reader_heading_acrostic")
+                .padding(start = 8.dp, end = 8.dp, top = 14.dp, bottom = 4.dp)
+        )
+    }
+}
+
+@Composable
+private fun ReaderVerseBody(
     verse: ReaderVerseText,
     highlighted: Boolean,
     style: TextStyle,

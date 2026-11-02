@@ -20,10 +20,8 @@ Open the project in Android Studio, or use the Gradle wrapper:
 
 ## Bible data
 
-The app bundles its Bible database for offline use. To rebuild it from the checked-in source and verify verse integrity:
+The app bundles its Bible database for offline use. To rebuild it from the checked-in OSIS XML source (`tools/sources/kjvlite.xml`) and verify it against that source:
 
 ```powershell
-python .\tools\build_kjv_pipeline.py
+python .\tools\import_osis_to_sqlite.py
 ```
-
-See [data tooling](tools/README.md) for details and [third-party notices](THIRD_PARTY_NOTICES.md) for sourcing and attribution.

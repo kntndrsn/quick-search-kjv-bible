@@ -23,5 +23,6 @@ data class ReferenceMatch(
 data class SearchResults(
     val referenceMatch: ReferenceMatch? = null,
     val matchingBooks: List<BibleBook> = emptyList(),
-    val matchingVerses: List<BibleVerse> = emptyList()
+    val matchingVerses: List<BibleVerse> = emptyList(),
+    val matchingHeadings: List<BibleHeading> = emptyList()
 )

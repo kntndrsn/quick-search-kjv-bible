@@ -1,95 +1,68 @@
-# KJV Integrity Tools
+# KJV Data Tools
 
-These scripts verify that app-stored Bible content matches the source text exactly.
+Build and verify the app's bundled SQLite database (`app/src/main/assets/kjv.db`)
+from the OSIS XML source `tools/sources/kjvlite.xml` (KJV 1769).
 
 ## Files
 
-- `kjv_integrity.py` - parser + verifier + manifest builder
-- `import_kjv_to_sqlite.py` - builds `kjv.db` from JSONL and auto-verifies against source
-- `build_kjv_pipeline.py` - one command for `export -> import -> verify`
-- `test_kjv_integrity.py` - unit tests for parser/compare behavior
-- `test_import_kjv_to_sqlite.py` - SQLite schema/import checks and sample normalization parity checks
-
-## Source expectations
-
-The parser expects a verse-keyed source in `Book Chapter:Verse text` format
-(for example `Matthew 5:7 ...`).
-
-The project now keeps a reproducible verse-keyed source at:
-
-- `tools/sources/kjv_biblesupersearch.txt`
+- `osis_parser.py` - streaming (SAX) OSIS parser producing verse and heading rows in the app's inline-marker format
+- `import_osis_to_sqlite.py` - builds `kjv.db` (tables + FTS4 indexes) and then runs the verifier
+- `verify_osis_db.py` - independent comparison of `kjv.db` against the original XML (does not use `osis_parser.py`)
+- `test_osis_parser.py`, `test_import_osis_to_sqlite.py` - unit tests (`python -m pytest tools`); the latter also runs the full strict verification of the bundled `kjv.db` against `kjvlite.xml`
 
 ## Quick usage
 
-Single-step pipeline:
-
 ```powershell
-python .\tools\build_kjv_pipeline.py --source ".\tools\sources\kjv_biblesupersearch.txt"
+python .\tools\import_osis_to_sqlite.py          # import + verify (default paths)
+python .\tools\verify_osis_db.py                 # re-verify an existing kjv.db
+python .\tools\import_osis_to_sqlite.py --jsonl .\tools\generated\kjv.jsonl   # also dump parsed rows
 ```
 
-Expanded/manual flow:
+Both commands exit non-zero and list mismatches with references on failure.
+`--allow-partial-source` relaxes whole-Bible checks for small test fixtures.
 
-```powershell
-python .\tools\kjv_integrity.py parse-stats --source ".\tools\sources\kjv_biblesupersearch.txt"
-python .\tools\kjv_integrity.py build-manifest --source ".\tools\sources\kjv_biblesupersearch.txt" --output .\tools\generated\kjv_manifest.json
-python .\tools\kjv_integrity.py export-jsonl --source ".\tools\sources\kjv_biblesupersearch.txt" --output .\tools\generated\kjv_verses.jsonl
-```
+## OSIS element mapping
 
-`export-jsonl` writes canonical verse rows for indexing.
+| OSIS                                                                     | Stored as                                                                |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| `<verse sID/>` ... `<verse eID/>`                                        | one `verses` row per verse                                               |
+| `<q who="Jesus">` (container or `sID`/`eID` milestones, may span verses) | `‹ ... ›` (red letter; reopened in each verse it spans)                  |
+| `<transChange type="added">`                                             | `[ ... ]` (italic)                                                       |
+| `<seg type="x-transChange" subType="x-added">`                           | `[ ... ]` (italic)                                                       |
+| `<divineName>`                                                           | `⸢ ... ⸣` (small caps; source text is mixed case, e.g. `⸢Lord⸣` -> LORD) |
+| `<title type="psalm">`                                                   | `headings` row, `type='psalm'`, attached to the following verse          |
+| `<title type="acrostic" canonical="true">` with `<foreign n="א">`        | `headings` row, `type='acrostic'`, `letter='א'`, plain text (not italic) |
+| `<inscription>`                                                          | kept inline in the verse text                                            |
+| `<note>`, `<milestone>` (¶ paragraphs), book/chapter titles, `<header>`  | dropped                                                                  |
+| Strong's / morphology attributes                                         | ignored                                                                  |
 
-The importer preserves the `books` columns and existing `verses` columns, adds
-`verses.text_norm TEXT NOT NULL`, and sets `PRAGMA user_version=2`. Verse rows
-are inserted in canonical book/chapter/verse order so their SQLite rowids are
-stable. `text_norm` is built by deleting source markup (`‹`, `›`, `[`, `]`,
-`¶`, `,`, `;`) and then applying the Kotlin
-`SearchNormalizer.normalizeVerseQuery` rules: lowercase, replace characters
-outside `[a-z0-9 ]` with spaces, collapse whitespace, and trim. The FTS4
-virtual table `verses_fts4(text_norm, tokenize=unicode61)` uses each verse's
-rowid as `docid`; the former FTS5 `verses_fts` table is not created. The asset
-is written with a 4096-byte page size and vacuumed before it is closed.
+## Schema (`PRAGMA user_version = 5`)
 
-## Verify indexed app data
+- `books(id, name, chapter_count)`
+- `verses(book_id, chapter, verse, text, text_norm)` - rows inserted in canonical order so rowids are stable
+- `verses_fts4(text_norm, tokenize=unicode61)` - `docid = verses.rowid`
+- `headings(id, book_id, chapter, verse, type, letter, text, text_norm)` - `verse` is the verse the heading precedes
+- `headings_fts4(text_norm, tokenize=unicode61)` - `docid = headings.id`
 
-Build `app/src/main/assets/kjv.db` from JSONL and automatically run source verification:
+FTS4 is used (not FTS5) because the app opens the asset with Android's framework
+SQLite, where FTS5 is not guaranteed at minSdk 26.
 
-```powershell
-python .\tools\import_kjv_to_sqlite.py --input .\tools\generated\kjv_verses.jsonl --db .\app\src\main\assets\kjv.db --source ".\tools\sources\kjv_biblesupersearch.txt"
-```
+`text_norm` mirrors Kotlin `SearchNormalizer.normalizeVerseText`: delete
+`‹ › [ ] ⸢ ⸣ , ;` and hyphen/en dash (so `Tubal–cain` → `tubalcain`), fold
+`æ`/`Æ` → `ae`, lowercase, replace characters outside `[a-z0-9 ]` with
+spaces, collapse whitespace, and trim. The asset uses a 4096-byte page size and
+is vacuumed after import.
 
-This import command validates both:
+## Verification
 
-- `JSONL == source parser output`
-- `SQLite verses table == source parser output`
+`verify_osis_db.py` re-tokenizes the raw XML with its own regex reader and compares
+the database against it:
 
-By default, source verification is strict (`Genesis 1:1` through `Revelation 22:21`).
-For small test fixtures only, you can pass `--allow-partial-source`.
+- verse keys (all 31,102), plain text, and per-character styling (red letter, italic, divine name)
+- headings (keys, type, acrostic letter, text, styling)
+- `text_norm`, FTS4 docid/text parity for both indexes
+- `books` row count and chapter counts, `user_version`, and `PRAGMA integrity_check`
 
-If your app uses SQLite with `verses(book_id, chapter, verse, text)`:
-
-```powershell
-python .\tools\kjv_integrity.py verify-sqlite --source ".\tools\sources\kjv_biblesupersearch.txt" --db .\app\src\main\assets\kjv.db
-```
-
-If you export verses as JSONL rows with `book_id`, `chapter`, `verse`, `text`:
-
-```powershell
-python .\tools\kjv_integrity.py verify-jsonl --source ".\tools\sources\kjv_biblesupersearch.txt" --input .\tools\exports\verses.jsonl
-```
-
-Both commands fail fast and print mismatches with references.
-
-`python -m pytest tools` also checks ten real sample verses against expected
-Kotlin normalization results, including bracketed text and red-letter markers
-in Matthew 5:3, and verifies the same values are persisted in SQLite. This is
-a Python-side mirror of the Kotlin normalizer contract; run the app's JVM unit
-tests as well to exercise the Kotlin implementation itself.
-
-## Current snapshot note
-
-Running `parse-stats` on `tools/sources/kjv_biblesupersearch.txt` yields all `31102` verses.
-
-## Distribution reminder
-
-- Keep source provenance records (`source_sha256` and manifest) when rebuilding assets.
-
-
+When changing the parser or schema, bump `DB_USER_VERSION` in `import_osis_to_sqlite.py`,
+`EXPECTED_USER_VERSION` in `verify_osis_db.py`, and `REQUIRED_DB_USER_VERSION` in
+`BibleRepository.kt` together so installed apps recopy the asset.

@@ -6,8 +6,10 @@ import android.util.Log
 import androidx.compose.runtime.Stable
 import androidx.core.content.pm.PackageInfoCompat
 import com.kntndrsn.quicksearchkjvbible.model.BibleBook
+import com.kntndrsn.quicksearchkjvbible.model.BibleHeading
 import com.kntndrsn.quicksearchkjvbible.model.BibleLocation
 import com.kntndrsn.quicksearchkjvbible.model.BibleVerse
+import com.kntndrsn.quicksearchkjvbible.model.HeadingType
 import com.kntndrsn.quicksearchkjvbible.model.SearchResults
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -84,14 +86,24 @@ class BibleRepository internal constructor(
         return withContext(Dispatchers.IO) { searchVerses(normalizedVerseQuery) }
     }
 
-    /** Full search: books, reference and verse text. */
+    /** Heading (psalm superscription / acrostic title) search (FTS4 with LIKE fallback). */
+    suspend fun searchHeadingText(query: String): List<BibleHeading> {
+        val normalizedVerseQuery = SearchNormalizer.normalizeVerseQuery(query)
+        if (normalizedVerseQuery.length < MIN_VERSE_QUERY_LENGTH) return emptyList()
+        return withContext(Dispatchers.IO) { searchHeadings(normalizedVerseQuery) }
+    }
+
+    /** Full search: books, reference, headings and verse text. */
     suspend fun search(query: String): SearchResults = withContext(Dispatchers.IO) {
         val navigation = searchNavigation(query)
         val normalizedVerseQuery = SearchNormalizer.normalizeVerseQuery(query)
         if (normalizedVerseQuery.length < MIN_VERSE_QUERY_LENGTH) {
             navigation
         } else {
-            navigation.copy(matchingVerses = searchVerses(normalizedVerseQuery))
+            navigation.copy(
+                matchingVerses = searchVerses(normalizedVerseQuery),
+                matchingHeadings = searchHeadings(normalizedVerseQuery)
+            )
         }
     }
 
@@ -149,22 +161,65 @@ class BibleRepository internal constructor(
         return verses
     }
 
-    private fun loadChapterVersesFromDb(db: SQLiteDatabase, bookId: Int, chapter: Int): List<BibleVerse> =
-        db.rawQuery(
+    private fun loadChapterVersesFromDb(db: SQLiteDatabase, bookId: Int, chapter: Int): List<BibleVerse> {
+        val args = arrayOf(bookId.toString(), chapter.toString())
+        val headings = db.rawQuery(
+            "SELECT book_id, chapter, verse, type, letter, text FROM headings " +
+                "WHERE book_id = ? AND chapter = ? ORDER BY id",
+            args
+        ).use { cursor ->
+            val list = ArrayList<BibleHeading>()
+            while (cursor.moveToNext()) list += readHeading(cursor)
+            list
+        }.groupBy { it.verse }
+        return db.rawQuery(
             "SELECT verse, text FROM verses WHERE book_id = ? AND chapter = ? ORDER BY verse",
-            arrayOf(bookId.toString(), chapter.toString())
+            args
         ).use { cursor ->
             val verses = ArrayList<BibleVerse>(cursor.count.coerceAtLeast(0))
             while (cursor.moveToNext()) {
+                val verse = cursor.getInt(0)
                 verses += BibleVerse(
                     bookId = bookId,
                     chapter = chapter,
-                    verse = cursor.getInt(0),
-                    text = cursor.getString(1)
+                    verse = verse,
+                    text = cursor.getString(1),
+                    headings = headings[verse].orEmpty()
                 )
             }
             verses
         }
+    }
+
+    private fun searchHeadings(normalizedQuery: String): List<BibleHeading> {
+        val db = database ?: return sampleChapters.values.asSequence()
+            .flatten()
+            .flatMap { it.headings }
+            .filter { SearchNormalizer.normalizeVerseText(it.text).contains(normalizedQuery) }
+            .take(MAX_HEADING_RESULTS)
+            .toList()
+        val headings = LinkedHashMap<Long, BibleHeading>()
+        db.rawQuery(HEADING_FTS_QUERY, arrayOf(buildFtsMatchQuery(normalizedQuery))).use { cursor ->
+            while (cursor.moveToNext()) headings.putIfAbsent(cursor.getLong(6), readHeading(cursor))
+        }
+        if (headings.size < MAX_HEADING_RESULTS) {
+            db.rawQuery(HEADING_LIKE_QUERY, arrayOf(buildLikePattern(normalizedQuery))).use { cursor ->
+                while (cursor.moveToNext() && headings.size < MAX_HEADING_RESULTS) {
+                    headings.putIfAbsent(cursor.getLong(6), readHeading(cursor))
+                }
+            }
+        }
+        return headings.values.toList()
+    }
+
+    private fun readHeading(cursor: android.database.Cursor) = BibleHeading(
+        bookId = cursor.getInt(0),
+        chapter = cursor.getInt(1),
+        verse = cursor.getInt(2),
+        type = HeadingType.fromDb(cursor.getString(3)),
+        letter = if (cursor.isNull(4)) null else cursor.getString(4),
+        text = cursor.getString(5)
+    )
 
     private fun searchVerses(normalizedVerseQuery: String): List<BibleVerse> {
         val db = database
@@ -213,7 +268,7 @@ class BibleRepository internal constructor(
     private class ChapterCache(private val maxSize: Int) {
         private val map = object : LinkedHashMap<Long, List<BibleVerse>>(maxSize + 1, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, List<BibleVerse>>?): Boolean =
-                size > maxSize
+                eldest != null && size > maxSize
         }
 
         private fun key(bookId: Int, chapter: Int): Long = (bookId.toLong() shl 32) or chapter.toLong()
@@ -229,12 +284,13 @@ class BibleRepository internal constructor(
 
     companion object {
         const val MAX_VERSE_RESULTS = 25
+        const val MAX_HEADING_RESULTS = 10
         const val MAX_BOOK_RESULTS = 6
         const val MIN_VERSE_QUERY_LENGTH = 3
         const val CHAPTER_CACHE_SIZE = 8
 
         /** Minimum PRAGMA user_version of the bundled database this code understands. */
-        const val REQUIRED_DB_USER_VERSION = 2
+        const val REQUIRED_DB_USER_VERSION = 5
 
         private const val TAG = "BibleRepository"
         private const val DB_NAME = "kjv.db"
@@ -246,6 +302,14 @@ class BibleRepository internal constructor(
 
         private const val LIKE_QUERY =
             "SELECT book_id, chapter, verse, text FROM verses WHERE text_norm LIKE ? LIMIT 25"
+
+        private const val HEADING_FTS_QUERY =
+            "SELECT h.book_id, h.chapter, h.verse, h.type, h.letter, h.text, h.id FROM headings_fts4 f " +
+                "JOIN headings h ON h.id = f.docid WHERE headings_fts4 MATCH ? ORDER BY h.id LIMIT 10"
+
+        private const val HEADING_LIKE_QUERY =
+            "SELECT book_id, chapter, verse, type, letter, text, id FROM headings " +
+                "WHERE text_norm LIKE ? ORDER BY id LIMIT 10"
 
         /**
          * Builds an FTS4 MATCH expression from a [SearchNormalizer.normalizeVerseQuery] result:

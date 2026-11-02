@@ -2,15 +2,13 @@
 
 ## King James Bible text source
 
-- Source file (in repo): `tools/sources/kjv_biblesupersearch.txt`
-- Source SHA-256: `61a54c7611855e09266732d923e64819273baf71b65bbb7c50249083e5b655fd`
+- Source file (in repo): `tools/sources/kjvlite.xml` (OSIS XML, "King James Version (1769)", OSIS work `Bible.KJV`)
+- Source SHA-256: `684b5ee60862d334f3bb2a6df8e9981d787fe6c97b7be943c0cff1e00c6043c9`
 
 ### Provenance note
 
 - Rebuild commands and verification tooling live under `tools/`.
-- Every import run verifies `JSONL == source parser output` and `SQLite == source parser output`.
-- Keep generated manifest/hash records for repeatable releases.
+- Every import run verifies the generated `kjv.db` against the XML source with an independent verifier (`tools/verify_osis_db.py`).
+- Record the source SHA-256 above when the source file changes.
 
 > This file is operational guidance for engineering implementation and is not legal advice.
-
-

@@ -1,11 +1,19 @@
 package com.kntndrsn.quicksearchkjvbible.data
 
+import com.kntndrsn.quicksearchkjvbible.model.BibleHeading
 import com.kntndrsn.quicksearchkjvbible.model.BibleVerse
+import com.kntndrsn.quicksearchkjvbible.model.HeadingType
 
 object SampleBibleContent {
     private fun verses(bookId: Int, chapter: Int, vararg lines: Pair<Int, String>): List<BibleVerse> =
         lines.map { (verse, text) ->
             BibleVerse(bookId = bookId, chapter = chapter, verse = verse, text = text)
+        }
+
+    private fun List<BibleVerse>.withHeading(verse: Int, type: HeadingType, text: String): List<BibleVerse> =
+        map {
+            if (it.verse != verse) it
+            else it.copy(headings = it.headings + BibleHeading(it.bookId, it.chapter, verse, type, null, text))
         }
 
     val chapterVerses: Map<Pair<Int, Int>, List<BibleVerse>> = mapOf(
@@ -19,13 +27,13 @@ object SampleBibleContent {
         ),
         (19 to 23) to verses(
             19, 23,
-            1 to "The Lord is my shepherd; I shall not want.",
+            1 to "The \u2E22Lord\u2E23 [is] my shepherd; I shall not want.",
             2 to "He maketh me to lie down in green pastures: he leadeth me beside the still waters.",
             3 to "He restoreth my soul: he leadeth me in the paths of righteousness for his name's sake.",
             4 to "Yea, though I walk through the valley of the shadow of death, I will fear no evil: for thou art with me.",
             5 to "Thou preparest a table before me in the presence of mine enemies.",
             6 to "Surely goodness and mercy shall follow me all the days of my life."
-        ),
+        ).withHeading(1, HeadingType.PSALM, "A Psalm of David."),
         (20 to 3) to verses(
             20, 3,
             5 to "Trust in the Lord with all thine heart; and lean not unto thine own understanding.",

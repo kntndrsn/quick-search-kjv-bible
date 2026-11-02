@@ -5,19 +5,44 @@ package com.kntndrsn.quicksearchkjvbible.data
  */
 object SearchNormalizer {
     /** Characters deleted (not replaced by a space) before building verses.text_norm. */
-    private const val VERSE_MARKER_CHARS = "\u2039\u203A[]\u00B6,;"
+    private const val VERSE_MARKER_CHARS = "\u2039\u203A[]\u2E22\u2E23,;"
+
+    /** Hyphen and en dash: deleted in verse search so compounds join (Tubal–cain -> tubalcain). */
+    private const val JOINING_CHARS = "-\u2013"
 
     fun normalize(text: String): String {
-        val cleaned = clean(text, allowColon = true, stripVerseMarkers = false)
+        val cleaned = clean(text, allowColon = true, verseMode = false)
         return rewriteLeadingOrdinal(cleaned)
     }
 
     fun normalizeVerseQuery(text: String): String =
-        clean(text, allowColon = false, stripVerseMarkers = false)
+        clean(text, allowColon = false, verseMode = true, stripVerseMarkers = false)
 
     /** Normalization used for the bundled database column verses.text_norm. */
     fun normalizeVerseText(text: String): String =
-        clean(text, allowColon = false, stripVerseMarkers = true)
+        clean(text, allowColon = false, verseMode = true, stripVerseMarkers = true)
+
+    /**
+     * Regex source that finds a [normalizeVerseQuery] token in displayed verse text, allowing
+     * an optional hyphen/en dash between letters and matching "ae" against æ/Æ.
+     */
+    fun highlightPatternFor(token: String): String {
+        val sb = StringBuilder()
+        var i = 0
+        while (i < token.length) {
+            if (i > 0) sb.append("[-\u2013]?")
+            if (token[i] == 'a' && i + 1 < token.length && token[i + 1] == 'e') {
+                sb.append("(?:[aA][-\u2013]?[eE]|[\u00E6\u00C6])")
+                i += 2
+            } else {
+                val c = token[i]
+                if (c in 'a'..'z') sb.append('[').append(c).append(c.uppercaseChar()).append(']')
+                else sb.append(Regex.escape(c.toString()))
+                i++
+            }
+        }
+        return sb.toString()
+    }
 
     fun compact(text: String): String = compactNormalized(normalize(text))
 
@@ -58,8 +83,14 @@ object SearchNormalizer {
      * Equivalent of lowercase() -> replace([^a-z0-9( :)]) with ' ' -> collapse \s+ -> trim.
      * Every rejected char becomes a separator, so the result is the kept-char runs joined by
      * single spaces. Non-ASCII chars use full String lowercasing (e.g. U+0130 -> "i\u0307").
+     * æ/Æ always fold to "ae". In [verseMode], hyphens and en dashes are deleted (joining words).
      */
-    private fun clean(text: String, allowColon: Boolean, stripVerseMarkers: Boolean): String {
+    private fun clean(
+        text: String,
+        allowColon: Boolean,
+        verseMode: Boolean,
+        stripVerseMarkers: Boolean = false
+    ): String {
         val sb = StringBuilder(text.length)
         var pendingSpace = false
         fun accept(c: Char) {
@@ -74,7 +105,12 @@ object SearchNormalizer {
         }
         for (c in text) {
             if (stripVerseMarkers && VERSE_MARKER_CHARS.indexOf(c) >= 0) continue
+            if (verseMode && JOINING_CHARS.indexOf(c) >= 0) continue
             when {
+                c == '\u00E6' || c == '\u00C6' -> {
+                    accept('a')
+                    accept('e')
+                }
                 c.code < 128 -> accept(if (c in 'A'..'Z') (c.code + 32).toChar() else c)
                 else -> {
                     val lower = c.toString().lowercase()

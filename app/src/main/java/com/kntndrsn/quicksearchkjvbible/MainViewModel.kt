@@ -85,7 +85,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (it.searchQuery == query) it.copy(searchResults = navigation) else it
                 }
                 delay(120.milliseconds)
-                query to navigation.copy(matchingVerses = repository.searchVerseText(query))
+                query to navigation.copy(
+                    matchingVerses = repository.searchVerseText(query),
+                    matchingHeadings = repository.searchHeadingText(query)
+                )
             }.flowOn(Dispatchers.Default).collectLatest { (query, results) ->
                 _uiState.update {
                     if (it.searchQuery == query) it.copy(searchResults = results) else it

@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
@@ -90,6 +89,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -679,6 +679,7 @@ private fun SearchResultsPanel(
 ) {
     val hasResults = results.referenceMatch != null ||
         results.matchingBooks.isNotEmpty() ||
+        results.matchingHeadings.isNotEmpty() ||
         results.matchingVerses.isNotEmpty()
 
     if (!hasResults && !isFullPage) return
@@ -689,8 +690,8 @@ private fun SearchResultsPanel(
             .distinct()
             .sortedByDescending { it.length }
             .takeIf { it.isNotEmpty() }
-            ?.joinToString("|") { Regex.escape(it) }
-            ?.let { Regex(it, RegexOption.IGNORE_CASE) }
+            ?.joinToString("|") { SearchNormalizer.highlightPatternFor(it) }
+            ?.let { Regex(it) }
     }
     val matchStyle = SpanStyle(
         background = MaterialTheme.colorScheme.secondaryContainer,
@@ -758,6 +759,27 @@ private fun SearchResultsPanel(
                 }
             }
 
+            if (results.matchingHeadings.isNotEmpty()) {
+                item(key = "headings_header", contentType = "header") { SearchSectionTitle("Headings", textScale) }
+                items(
+                    results.matchingHeadings,
+                    key = { "heading-${it.type}-${verseKey(it.bookId, it.chapter, it.verse)}" },
+                    contentType = { "heading" }
+                ) { heading ->
+                    val book = repository.bookById(heading.bookId)
+                    SearchRow(
+                        title = "${book.name} ${heading.chapter}:${heading.verse}",
+                        textScale = textScale,
+                        subtitle = remember(heading, matchPattern, matchStyle) {
+                            buildSearchVerseAnnotatedString(headingLabel(heading), matchPattern, matchStyle)
+                        },
+                        onClick = {
+                            onVerseSelected(BibleVerse(heading.bookId, heading.chapter, heading.verse, heading.text))
+                        }
+                    )
+                }
+            }
+
             if (results.matchingVerses.isNotEmpty()) {
                 item(key = "verses_header", contentType = "header") { SearchSectionTitle("Verses", textScale) }
                 items(results.matchingVerses, key = { verseKey(it.bookId, it.chapter, it.verse) }, contentType = { "verse" }) { verse ->
@@ -790,8 +812,8 @@ private fun SearchSectionTitle(title: String, textScale: () -> Float) {
 private fun SearchRow(
     title: String,
     textScale: () -> Float,
-    subtitle: AnnotatedString? = null,
     modifier: Modifier = Modifier,
+    subtitle: AnnotatedString? = null,
     onClick: () -> Unit
 ) {
     Column(
@@ -819,13 +841,24 @@ private fun SearchRow(
     }
 }
 
+private const val SMALL_CAPS_SCALE = 0.8f
+
 private fun TextStyle.scaledBy(scale: Float): TextStyle = copy(
     fontSize = fontSize * scale,
     lineHeight = lineHeight * scale
 )
 
-private fun plainVerseText(raw: String): String = buildString(raw.length) {
-    raw.forEach { if (it != '‹' && it != '›' && it != '[' && it != ']') append(it) }
+/** Strips inline markers; divine-name spans are uppercased (LORD) to match the reader. */
+internal fun plainVerseText(raw: String): String = buildString(raw.length) {
+    var inDivineName = false
+    for (char in raw) {
+        when (char) {
+            '‹', '›', '[', ']' -> Unit
+            '⸢' -> inDivineName = true
+            '⸣' -> inDivineName = false
+            else -> append(if (inDivineName) char.uppercaseChar() else char)
+        }
+    }
 }
 
 internal fun buildSearchVerseAnnotatedString(
@@ -842,8 +875,7 @@ internal fun buildSearchVerseAnnotatedString(
 
 internal fun buildStyledVerseAnnotatedString(
     raw: String,
-    christWordColor: Color,
-    pilcrowColor: Color
+    christWordColor: Color
 ): AnnotatedString {
     fun styleFor(isChristWord: Boolean, isItalic: Boolean): SpanStyle? {
         val hasStyling = isChristWord || isItalic
@@ -858,11 +890,22 @@ internal fun buildStyledVerseAnnotatedString(
         val buffer = StringBuilder()
         var inChristWords = false
         var inBracket = false
+        var inDivineName = false
 
         fun flush() {
             if (buffer.isEmpty()) return
             val start = length
-            append(buffer.toString())
+            if (inDivineName) {
+                // Synthetic small caps: initial capital at full size, the rest uppercased and reduced.
+                append(buffer[0].uppercaseChar())
+                if (buffer.length > 1) {
+                    val smallStart = length
+                    append(buffer.substring(1).uppercase())
+                    addStyle(SpanStyle(fontSize = SMALL_CAPS_SCALE.em), smallStart, length)
+                }
+            } else {
+                append(buffer.toString())
+            }
             val style = styleFor(inChristWords, inBracket)
             if (style != null) {
                 addStyle(style, start, length)
@@ -888,14 +931,13 @@ internal fun buildStyledVerseAnnotatedString(
                     flush()
                     inBracket = false
                 }
-                '¶' -> {
+                '⸢' -> {
                     flush()
-                    if (length > 0) {
-                        append('\n')
-                    }
-                    val start = length
-                    append(char)
-                    addStyle(SpanStyle(color = pilcrowColor, fontWeight = FontWeight.SemiBold), start, length)
+                    inDivineName = true
+                }
+                '⸣' -> {
+                    flush()
+                    inDivineName = false
                 }
                 else -> buffer.append(char)
             }
