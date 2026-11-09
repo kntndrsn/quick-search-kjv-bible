@@ -18,6 +18,11 @@ tools/generated/
 __pycache__/
 *.py[cod]
 
+web/node_modules/
+web/dist/
+web/public/kjv.db
+web/public/sql-wasm*.wasm
+
 # Keep KJV source text and Python database population scripts in source control
 !tools/*.py
 !tools/sources/
