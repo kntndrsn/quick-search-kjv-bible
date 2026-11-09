@@ -82,6 +82,9 @@ to download all chapters and search data, with progress and cancel/retry.
 Interrupted downloads reuse verified cached files. A chapter not yet cached
 requires internet access; search likewise requires its own initial download.
 Failures are shown with retry controls instead of empty results.
+Selecting an uncached chapter fetches it automatically when online. Invalid
+cached payloads are discarded and fetched again, with the replacement verified
+before it is displayed or cached.
 
 The production service worker installs the app shell, including the search
 worker, separately from Bible downloads. It is scoped to the reader, not the

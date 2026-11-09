@@ -60,10 +60,34 @@ test('gzip and compatibility JSON decode identically and corrupted data fails ex
   await readPayload(bad, manifest.version);
   const cache = await caches.open(`kjv-reader-data-${manifest.version}`);
   await cache.put(representation(bad).url, new Response('broken cached bytes'));
+  const beforeReplacement = requests.length;
+  const replacement = await readPayload(bad, manifest.version);
+  assert.equal(replacement[0].chapter, 2);
+  assert.equal(requests.length, beforeReplacement + 1);
+  assert.ok(await cache.match(representation(bad).url));
+  await cache.put(representation(bad).url, new Response('broken cached bytes'));
+  corruptPath = representation(bad).url;
   await assert.rejects(readPayload(bad, manifest.version), /size mismatch/);
   assert.equal(await cache.match(representation(bad).url), undefined);
+  corruptPath = null;
   await readPayload(bad, manifest.version);
   await assert.rejects(loadChapter(99, 1), /No chapter/);
+});
+
+test('selecting an uncached chapter fetches it online and recovers after an offline selection', async () => {
+  const manifest = await getManifest();
+  const url = representation(manifest.chapters['40-7']).url;
+  const cache = await caches.open(`kjv-reader-data-${manifest.version}`);
+  assert.equal(await cache.match(url), undefined);
+  offline = true;
+  await assert.rejects(loadChapter(40, 7), /Network offline/);
+  offline = false;
+  const before = requests.filter((request) => request === url).length;
+  const verses = await loadChapter(40, 7);
+  assert.equal(verses[0].bookId, 40);
+  assert.equal(verses[0].chapter, 7);
+  assert.equal(requests.filter((request) => request === url).length, before + 1);
+  assert.ok(await cache.match(url));
 });
 
 test('cancelled downloads remain incomplete; resuming verifies every chapter and offline search data', async () => {
