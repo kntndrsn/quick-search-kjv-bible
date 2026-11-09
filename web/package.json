@@ -1,0 +1,22 @@
+{
+  "name": "quick-search-kjv-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Offline web reader for the Quick Search KJV Bible. Uses the Android app's kjv.db.",
+  "type": "module",
+  "scripts": {
+    "copy-assets": "node scripts/copy-assets.mjs",
+    "predev": "node scripts/copy-assets.mjs",
+    "prebuild": "node scripts/copy-assets.mjs",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node --test test/*.mjs"
+  },
+  "dependencies": {
+    "sql.js": "^1.13.0"
+  },
+  "devDependencies": {
+    "vite": "^6.4.1"
+  }
+}
