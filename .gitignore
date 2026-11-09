@@ -22,9 +22,9 @@ web/node_modules/
 web/dist/
 web/public/kjv.db
 web/public/sql-wasm*.wasm
+web/public/data/
 
 # Keep KJV source text and Python database population scripts in source control
 !tools/*.py
 !tools/sources/
 !tools/sources/**
-

@@ -3,7 +3,6 @@ import test from 'node:test';
 import { books } from '../src/books.js';
 import { headingLabel, plainVerseText, styledParts } from '../src/format.js';
 import {
-  buildFtsMatchQuery,
   highlightPatternFor,
   normalize,
   normalizeVerseQuery,
@@ -59,12 +58,6 @@ test('highlight pattern finds folded spellings', () => {
     [...text.matchAll(pattern)].map((match) => match[0]),
     ['Tubal\u2013cain', 'C\u00E6sar', '\u00C6non', 'Caesar']
   );
-});
-
-test('fts match quotes each token and prefixes the last', () => {
-  assert.equal(buildFtsMatchQuery('faith'), '"faith*"');
-  assert.equal(buildFtsMatchQuery('i can do all thin'), '"i" "can" "do" "all" "thin*"');
-  assert.equal(buildFtsMatchQuery(''), '');
 });
 
 test('plain and styled verse text', () => {

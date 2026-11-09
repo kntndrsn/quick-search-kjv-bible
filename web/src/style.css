@@ -503,3 +503,27 @@ progress {
   .scale-value { min-width: 44px; padding: 0 2px; }
   .book-button strong { font-size: 0.98rem; }
 }
+.data-status {
+  padding: 1rem;
+}
+
+.offline-control {
+  padding: 1rem;
+  border-top: 1px solid currentColor;
+  flex-shrink: 0;
+}
+
+.offline-control progress {
+  display: block;
+  width: 100%;
+  margin: 0.5rem 0;
+}
+
+.offline-control [hidden] {
+  display: none;
+}
+
+.offline-control button {
+  padding: 0.5rem;
+  margin-right: 0.5rem;
+}

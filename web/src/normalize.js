@@ -142,15 +142,3 @@ export function highlightPatternFor(token) {
   }
   return pattern;
 }
-
-export function buildFtsMatchQuery(normalizedQuery) {
-  let sb = '';
-  for (const token of normalizedQuery.split(' ')) {
-    const cleanToken = [...token].filter((ch) => (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')).join('');
-    if (!cleanToken) continue;
-    if (sb) sb += '" ';
-    sb += `"${cleanToken}`;
-  }
-  if (!sb) return '';
-  return `${sb}*"`;
-}

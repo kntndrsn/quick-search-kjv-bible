@@ -1,6 +1,5 @@
 import { bookById, books } from './books.js';
 import {
-  buildFtsMatchQuery,
   compactNormalized,
   normalize,
   normalizeVerseQuery,
@@ -8,24 +7,13 @@ import {
   soundexOfCompact
 } from './normalize.js';
 import { createReferenceParser } from './reference.js';
+import { getManifest, readPayload } from './data.js';
 
 export const MAX_VERSE_RESULTS = 25;
 export const MAX_HEADING_RESULTS = 10;
 export const MAX_BOOK_RESULTS = 6;
 export const MIN_VERSE_QUERY_LENGTH = 3;
 const CHAPTER_CACHE_SIZE = 8;
-
-const FTS_QUERY =
-  'SELECT v.book_id, v.chapter, v.verse, v.text FROM verses_fts4 f ' +
-  'JOIN verses v ON v.rowid = f.docid WHERE verses_fts4 MATCH ? LIMIT 25';
-const LIKE_QUERY =
-  'SELECT book_id, chapter, verse, text FROM verses WHERE text_norm LIKE ? LIMIT 25';
-const HEADING_FTS_QUERY =
-  'SELECT h.book_id, h.chapter, h.verse, h.type, h.letter, h.text, h.id FROM headings_fts4 f ' +
-  'JOIN headings h ON h.id = f.docid WHERE headings_fts4 MATCH ? ORDER BY h.id LIMIT 10';
-const HEADING_LIKE_QUERY =
-  'SELECT book_id, chapter, verse, type, letter, text, id FROM headings ' +
-  'WHERE text_norm LIKE ? ORDER BY id LIMIT 10';
 
 const parser = createReferenceParser(books);
 
@@ -41,22 +29,8 @@ const searchIndex = books.map((book) => {
   };
 });
 
-let database = null;
 const chapterCache = new Map();
-
-export function attachDatabase(db) {
-  database = db;
-  chapterCache.clear();
-}
-
-function rows(sql, params) {
-  const stmt = database.prepare(sql);
-  stmt.bind(params);
-  const out = [];
-  while (stmt.step()) out.push(stmt.getAsObject());
-  stmt.free();
-  return out;
-}
+const chapterRequests = new Map();
 
 function remember(key, value) {
   if (chapterCache.has(key)) chapterCache.delete(key);
@@ -68,40 +42,22 @@ function remember(key, value) {
   return value;
 }
 
-export function loadChapter(bookId, chapter) {
+export async function loadChapter(bookId, chapter) {
   const key = `${bookId}:${chapter}`;
   const cached = chapterCache.get(key);
   if (cached) return remember(key, cached);
 
-  const headings = rows(
-    'SELECT book_id, chapter, verse, type, letter, text FROM headings WHERE book_id = ? AND chapter = ? ORDER BY id',
-    [bookId, chapter]
-  );
-  const byVerse = new Map();
-  for (const heading of headings) {
-    const list = byVerse.get(heading.verse) || [];
-    list.push({
-      bookId: heading.book_id,
-      chapter: heading.chapter,
-      verse: heading.verse,
-      type: heading.type,
-      letter: heading.letter,
-      text: heading.text
-    });
-    byVerse.set(heading.verse, list);
-  }
-  const verses = rows(
-    'SELECT verse, text FROM verses WHERE book_id = ? AND chapter = ? ORDER BY verse',
-    [bookId, chapter]
-  ).map((row) => ({
-    bookId,
-    chapter,
-    verse: row.verse,
-    text: row.text,
-    headings: byVerse.get(row.verse) || []
-  }));
-  if (verses.length === 0) throw new Error(`No verses for book ${bookId} chapter ${chapter}`);
-  return remember(key, verses);
+  if (chapterRequests.has(key)) return chapterRequests.get(key);
+  const request = (async () => {
+    const manifest = await getManifest();
+    const descriptor = manifest.chapters[`${bookId}-${chapter}`];
+    if (!descriptor) throw new Error(`No chapter ${bookId}:${chapter}`);
+    const verses = await readPayload(descriptor, manifest.version);
+    if (!Array.isArray(verses) || !verses.length) throw new Error('Invalid chapter data');
+    return remember(key, verses);
+  })().finally(() => chapterRequests.delete(key));
+  chapterRequests.set(key, request);
+  return request;
 }
 
 function matchBooks(normalized, compact) {
@@ -145,72 +101,36 @@ export function searchNavigation(query) {
   };
 }
 
-function verseKey(verse) {
-  return `${verse.bookId}:${verse.chapter}:${verse.verse}`;
-}
+let worker;
+let nextRequest = 0;
+const searches = new Map();
 
-function readVerse(row) {
-  return {
-    bookId: row.book_id,
-    chapter: row.chapter,
-    verse: row.verse,
-    text: row.text,
-    headings: []
-  };
-}
-
-function readHeading(row) {
-  return {
-    bookId: row.book_id,
-    chapter: row.chapter,
-    verse: row.verse,
-    type: row.type,
-    letter: row.letter,
-    text: row.text,
-    id: row.id
-  };
-}
-
-export function searchVerseText(query) {
-  const normalized = normalizeVerseQuery(query);
-  if (normalized.length < MIN_VERSE_QUERY_LENGTH || !database) return [];
-  const match = buildFtsMatchQuery(normalized);
-  const verses = new Map();
-  if (match) {
-    for (const row of rows(FTS_QUERY, [match])) {
-      const verse = readVerse(row);
-      if (!verses.has(verseKey(verse))) verses.set(verseKey(verse), verse);
-    }
+export async function searchText(query) {
+  if (normalizeVerseQuery(query).length < MIN_VERSE_QUERY_LENGTH) {
+    return { matchingVerses: [], matchingHeadings: [] };
   }
-  if (verses.size < MAX_VERSE_RESULTS) {
-    for (const row of rows(LIKE_QUERY, [`%${normalized}%`])) {
-      if (verses.size >= MAX_VERSE_RESULTS) break;
-      const verse = readVerse(row);
-      if (!verses.has(verseKey(verse))) verses.set(verseKey(verse), verse);
-    }
+  const manifest = await getManifest();
+  if (!worker) {
+    worker = new Worker(new URL('./search-worker.js', import.meta.url), { type: 'module' });
+    worker.onmessage = ({ data }) => {
+      const pending = searches.get(data.id);
+      if (!pending) return;
+      searches.delete(data.id);
+      if (data.error) pending.reject(new Error(data.error));
+      else pending.resolve(data.result);
+    };
+    worker.onerror = (event) => {
+      for (const pending of searches.values()) pending.reject(new Error(event.message || 'Search worker failed'));
+      searches.clear();
+      worker.terminate();
+      worker = null;
+    };
   }
-  return [...verses.values()];
-}
-
-export function searchHeadingText(query) {
-  const normalized = normalizeVerseQuery(query);
-  if (normalized.length < MIN_VERSE_QUERY_LENGTH || !database) return [];
-  const match = buildFtsMatchQuery(normalized);
-  const headings = new Map();
-  if (match) {
-    for (const row of rows(HEADING_FTS_QUERY, [match])) {
-      const heading = readHeading(row);
-      if (!headings.has(heading.id)) headings.set(heading.id, heading);
-    }
-  }
-  if (headings.size < MAX_HEADING_RESULTS) {
-    for (const row of rows(HEADING_LIKE_QUERY, [`%${normalized}%`])) {
-      if (headings.size >= MAX_HEADING_RESULTS) break;
-      const heading = readHeading(row);
-      if (!headings.has(heading.id)) headings.set(heading.id, heading);
-    }
-  }
-  return [...headings.values()];
+  return new Promise((resolve, reject) => {
+    const id = ++nextRequest;
+    searches.set(id, { resolve, reject });
+    worker.postMessage({ id, query, manifest });
+  });
 }
 
 export function bookName(id) {

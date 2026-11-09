@@ -1,7 +1,8 @@
 import { bookById, books, pageAt, pageIndex, pages } from './books.js';
 import { appendHighlighted, appendStyled, headingLabel, plainVerseText } from './format.js';
 import { highlightPatternFor, normalizeVerseQuery } from './normalize.js';
-import { loadChapter, searchHeadingText, searchNavigation, searchVerseText } from './repository.js';
+import { loadChapter, searchNavigation, searchText } from './repository.js';
+import { mountOfflineControl } from './offline.js';
 
 const PREFS_KEY = 'kjv-web-prefs';
 const MIN_SCALE = 0.5;
@@ -37,6 +38,7 @@ const state = {
   results: emptyResults(),
   searchToken: 0
 };
+let searchStatus = '';
 
 let root;
 let searchTimer = 0;
@@ -122,6 +124,7 @@ export function mountApp(mount) {
   bindPinch(document.getElementById('search-page'));
   bindPinch(document.getElementById('search-card'));
   render();
+  mountOfflineControl(document.getElementById('toc'));
   window.addEventListener('popstate', onPopState);
   window.addEventListener('keydown', onKeyDown);
   document.addEventListener('visibilitychange', () => {
@@ -280,7 +283,7 @@ function roundStep(value) {
   return Math.round(value * 10) / 10;
 }
 
-function renderReader() {
+async function renderReader() {
   const stamp = `${state.bookId}:${state.chapter}:${scrollRequest}`;
   if (stamp === readerStamp) {
     updateHighlights();
@@ -288,8 +291,15 @@ function renderReader() {
   }
   readerStamp = stamp;
   const index = pageIndex(state.bookId, state.chapter);
+  pageLoads.set(pageSlot('prev'), Symbol());
+  pageLoads.set(pageSlot('next'), Symbol());
+  pageSlot('prev').replaceChildren();
+  pageSlot('next').replaceChildren();
+  document.getElementById('pager').style.transition = 'none';
+  document.getElementById('pager').style.transform = 'translateX(-33.3333%)';
+  const ready = await fillPage(pageSlot('current'), pageAt(index), true);
+  if (!ready || readerStamp !== stamp) return;
   fillPage(pageSlot('prev'), index > 0 ? pageAt(index - 1) : null, false);
-  fillPage(pageSlot('current'), pageAt(index), true);
   fillPage(pageSlot('next'), index < pages.length - 1 ? pageAt(index + 1) : null, false);
   const current = pageSlot('current');
   const verse = state.pendingScrollVerse;
@@ -324,9 +334,37 @@ function pageSlot(slot) {
   return document.querySelector(`.page[data-slot="${slot}"]`);
 }
 
-function fillPage(element, location, interactive) {
+const pageLoads = new WeakMap();
+
+async function fillPage(element, location, interactive) {
+  const request = Symbol();
+  pageLoads.set(element, request);
   element.innerHTML = '';
   if (!location) return;
+  const loading = document.createElement('p');
+  loading.className = 'data-status';
+  loading.setAttribute('role', 'status');
+  loading.textContent = 'Loading chapter...';
+  element.append(loading);
+  let verses;
+  try {
+    verses = await loadChapter(location.bookId, location.chapter);
+  } catch (error) {
+    if (pageLoads.get(element) !== request) return false;
+    console.error(error);
+    loading.textContent = 'This chapter could not be loaded. If it is not downloaded, reconnect to the internet and retry.';
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.textContent = 'Retry chapter';
+    retry.addEventListener('click', () => {
+      readerStamp = '';
+      renderReader();
+    });
+    loading.append(document.createElement('br'), retry);
+    return false;
+  }
+  if (pageLoads.get(element) !== request) return false;
+  element.replaceChildren();
   const book = bookById(location.bookId);
   const column = document.createElement('div');
   column.className = 'column';
@@ -338,7 +376,6 @@ function fillPage(element, location, interactive) {
     <p class="hint">Swipe left or right to move between chapters. Pinch to resize text.</p>
   `;
   column.append(header);
-  const verses = loadChapter(location.bookId, location.chapter);
   for (const verse of verses) {
     for (const heading of verse.headings) {
       const headingEl = document.createElement('p');
@@ -367,6 +404,7 @@ function fillPage(element, location, interactive) {
     column.append(button);
   }
   element.append(column);
+  return true;
 }
 
 function updateHighlights() {
@@ -399,7 +437,8 @@ function renderSearchResults() {
     state.results.referenceMatch ||
     state.results.matchingBooks.length ||
     state.results.matchingHeadings.length ||
-    state.results.matchingVerses.length
+    state.results.matchingVerses.length ||
+    searchStatus
   );
   page.classList.toggle('hidden', !state.fullPage);
   overlay.classList.toggle('hidden', state.fullPage || !active || !hasResults);
@@ -407,6 +446,20 @@ function renderSearchResults() {
   const queryChanged = renderedSearchQuery !== state.query;
   const previousScroll = scroller.scrollTop;
   scroller.replaceChildren(buildResults(hasResults));
+  if (searchStatus) {
+    const status = document.createElement('p');
+    status.className = 'data-status';
+    status.setAttribute('role', 'status');
+    status.textContent = searchStatus;
+    if (searchStatus !== 'Loading text search...') {
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.textContent = 'Retry search';
+      retry.addEventListener('click', scheduleSearch);
+      status.append(document.createElement('br'), retry);
+    }
+    scroller.append(status);
+  }
   scroller.scrollTop = queryChanged ? 0 : previousScroll;
   renderedSearchQuery = state.query;
 }
@@ -642,14 +695,21 @@ function scheduleSearch() {
   const token = state.searchToken + 1;
   state.searchToken = token;
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => {
+  searchStatus = normalizeVerseQuery(state.query).length >= 3 ? 'Loading text search...' : '';
+  renderSearchResults();
+  searchTimer = setTimeout(async () => {
     if (token !== state.searchToken) return;
     const query = state.query;
-    state.results = {
-      ...searchNavigation(query),
-      matchingVerses: searchVerseText(query),
-      matchingHeadings: searchHeadingText(query)
-    };
+    try {
+      const results = await searchText(query);
+      if (token !== state.searchToken) return;
+      state.results = { ...searchNavigation(query), ...results };
+      searchStatus = '';
+    } catch (error) {
+      if (token !== state.searchToken) return;
+      console.error(error);
+      searchStatus = 'Text search could not be loaded. Reconnect to the internet or download the entire Bible for offline search.';
+    }
     renderSearchResults();
   }, 120);
 }
@@ -690,11 +750,13 @@ function openChapter(book, chapter, verse) {
 }
 
 function dismissSearch() {
+  state.searchToken += 1;
+  clearTimeout(searchTimer);
+  searchStatus = '';
   state.query = '';
   state.searchFocused = false;
   state.fullPage = false;
   state.results = emptyResults();
-  state.searchToken += 1;
   const input = document.getElementById('search-input');
   if (input && document.activeElement === input) input.blur();
 }
@@ -719,6 +781,7 @@ function saveVisibleVerse() {
   if (suppressScrollSave) return;
   const page = pageSlot('current');
   if (!page) return;
+  if (!page.querySelector('.verse') || state.pendingScrollVerse !== null) return;
   const pageTop = page.getBoundingClientRect().top + 8;
   let verse = 1;
   for (const el of page.querySelectorAll('.verse')) {
