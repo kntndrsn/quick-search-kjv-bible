@@ -1,6 +1,6 @@
 # Bible Quick Search KJV
 
-An offline King James Version Bible reader for Android phones, foldables, and tablets.
+A King James Version Bible reader for Android phones, foldables, tablets, and the web.
 
 ## Features
 
@@ -9,7 +9,7 @@ An offline King James Version Bible reader for Android phones, foldables, and ta
 - Adjust text size with pinch-to-zoom or shared reader and search controls.
 - Resume reading where you left off, with saved text size and light/dark themes.
 
-## Build
+## Android build
 
 Open the project in Android Studio, or use the Gradle wrapper:
 
@@ -20,7 +20,7 @@ Open the project in Android Studio, or use the Gradle wrapper:
 
 ## Bible data
 
-The app bundles its Bible database for offline use. To rebuild it from the checked-in OSIS XML source (`tools/sources/kjvlite.xml`) and verify it against that source:
+The Android app bundles its Bible database for offline use. To rebuild it from the checked-in OSIS XML source (`tools/sources/kjvlite.xml`) and verify it against that source:
 
 ```powershell
 python .\tools\import_osis_to_sqlite.py
@@ -28,10 +28,10 @@ python .\tools\import_osis_to_sqlite.py
 
 ## Web reader
 
-The `web/` app is a static website: no application server, Node process, or
-SQLite/WebAssembly runtime is required in production. It shares the checked-in
-OSIS source and parser with Android but does not modify the Android database or
-Gradle build.
+The `web/` reader is a static website that can be hosted on GitHub Pages.
+It uses compressed chapter data generated from the same Bible source as Android.
+Reading content loads first; text and heading search load separately when needed.
+No backend is required.
 
 Use Node.js 22+ and Python 3.12+ (standard library only):
 
@@ -58,43 +58,23 @@ Publish the **contents** of `web/dist/` at that base path. Leave `WEB_BASE` unse
 for a site served at `/`. Development and preview servers are only local tools,
 not hosting requirements.
 
-### Loading and compression
-
-The build exports one compact payload per chapter and a separate precomputed
-search index from `tools/sources/kjvlite.xml`. It produces deterministic gzip
-assets and plain JSON compatibility assets under an immutable data version.
-Browsers with `DecompressionStream('gzip')` fetch and decode the gzip files;
-older browsers fetch JSON instead. Hosting does not need custom compression
-headers. Generated data and build output are not checked into Git.
-
-The reader loads the saved chapter first, then prefetches adjacent chapters.
-Text and heading search load in a Web Worker on the first qualifying query,
-without blocking reading. Reference and book-name lookup do not need the search
-download. Payload size and SHA-256 checks reject incomplete or corrupt data.
-The web tests verify every verse and heading against the Android asset and
-compare representative searches with its SQLite behavior.
+The build generates gzip-compressed chapters and search data, with plain JSON
+compatibility for browsers without native gzip decoding. Generated files stay
+out of source control, and hosting requires no custom compression headers.
 
 ### Offline use
 
-On the production HTTPS site (or localhost), visited chapters and loaded search
-data are cached. Open the table of contents and select **Download entire Bible**
-to download all chapters and search data, with progress and cancel/retry.
-Interrupted downloads reuse verified cached files. A chapter not yet cached
-requires internet access; search likewise requires its own initial download.
-Failures are shown with retry controls instead of empty results.
+Visited chapters and loaded search data are cached automatically. Selecting an
+uncached chapter fetches it when online. Open the table of contents and select
+**Download entire Bible** for complete offline reading and search, with download
+progress, cancellation, and retry. Interrupted downloads reuse cached files.
 
-The production service worker installs the app shell, including the search
-worker, separately from Bible downloads. It is scoped to the reader, not the
-privacy page, and does not delete other websites' caches. Older versioned
-offline sets are retained so updates do not discard a working offline copy.
-Reload after an update and run the full download again to verify the new set.
-This can consume extra storage across updates; clearing this site's browser
-data removes old sets **and** saved preferences/downloads.
-
-Persistent storage is requested when starting a full download where supported.
-Browsers or users may still clear storage; **Verify offline download** rechecks
-the files and restores missing ones when online. Service workers require a
-secure context and are not installed by the development server.
+Offline installation requires the production site over HTTPS or localhost.
+After an update, reload and download again to include the new version. Older
+offline versions are retained, so updates can use additional storage.
+**Verify offline download** checks downloaded files and restores missing ones
+when online. Browser storage can be cleared; clearing this site's data also
+removes saved preferences and downloads.
 
 ### GitHub Pages
 

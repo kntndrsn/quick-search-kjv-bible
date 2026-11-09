@@ -57,20 +57,23 @@ export async function fetchPayload(descriptor, version, { signal, gzip = support
   const expected = representation(descriptor, gzip);
   const cache = typeof caches !== 'undefined' ? await caches.open(`kjv-reader-data-${version}`) : null;
   const cached = await cache?.match(expected.url);
-  let response = cached;
-  if (!response) {
-    response = await fetch(expected.url, { signal });
-    if (!response.ok) throw new Error(`Bible data unavailable: HTTP ${response.status}`);
-  }
   let bytes;
-  try {
+  if (cached) {
+    try {
+      bytes = await verifiedBytes(cached, expected);
+    } catch (error) {
+      console.warn('Invalid cached Bible data; fetching a verified replacement', expected.url, error);
+      await cache.delete(expected.url);
+    }
+  }
+  if (!bytes) {
+    const response = await fetch(expected.url, { signal, cache: 'no-cache' });
+    if (!response.ok) throw new Error(`Bible data unavailable: HTTP ${response.status}`);
     bytes = await verifiedBytes(response.clone(), expected);
-  } catch (error) {
-    if (cached) await cache.delete(expected.url);
-    throw error;
+    if (signal?.aborted) throw new DOMException('Download cancelled', 'AbortError');
+    if (cache) await cache.put(expected.url, response);
   }
   if (signal?.aborted) throw new DOMException('Download cancelled', 'AbortError');
-  if (!cached && cache) await cache.put(expected.url, response);
   return { bytes, gzip };
 }
 
